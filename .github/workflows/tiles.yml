@@ -20,7 +20,10 @@ jobs:
         run: git lfs pull
 
       - name: Install tippecanoe
-        uses: mapbox/setup-tippecanoe@v3
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tippecanoe
+
 
       - name: Set up Python
         uses: actions/setup-python@v5
