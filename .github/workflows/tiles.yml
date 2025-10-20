@@ -16,7 +16,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y tippecanoe
-
+     
+      - name: Pull LFS files
+        run: |
+          git lfs install
+          git lfs fetch --all
+          git lfs checkout
       - name: Install pmtiles converter
         run: |
           curl -L https://github.com/protomaps/go-pmtiles/releases/latest/download/pmtiles-linux-amd64 \
