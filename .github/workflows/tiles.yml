@@ -25,14 +25,9 @@ jobs:
           sudo apt-get install -y tippecanoe
 
       # 👇 correct download URL for pmtiles binary
-      - name: Install pmtiles converter (auto-detect latest release)
+      - name: Install pmtiles converter
         run: |
-          # Get the latest release JSON and extract the browser_download_url for Linux AMD64
-          curl -s https://api.github.com/repos/protomaps/go-pmtiles/releases/latest \
-            | grep "browser_download_url" \
-            | grep "linux-amd64" \
-            | cut -d '"' -f 4 \
-            | xargs curl -L -o pmtiles
+          curl -L -o pmtiles https://github.com/protomaps/go-pmtiles/releases/download/v1.17.1/pmtiles-linux-amd64
           chmod +x pmtiles
           ./pmtiles --version
 
