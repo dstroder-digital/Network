@@ -1,60 +1,53 @@
 name: Build PMTiles from edges.geojson
+
 on:
+  workflow_dispatch:
   push:
-    branches: [ main ]
     paths:
       - "docs/data/app/edges.geojson"
-  workflow_dispatch:
+      - ".github/workflows/tiles.yml"
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # 1) Checkout with LFS content pulled automatically
-      - uses: actions/checkout@v4
+      - name: Checkout (with LFS)
+        uses: actions/checkout@v4
         with:
           lfs: true
-          fetch-depth: 0
 
-      # (debug) prove we have the real file, not an LFS pointer
-      - name: Show file info
-        run: |
-          ls -lh docs/data/app
-          head -n 3 docs/data/app/edges.geojson || true
-          file docs/data/app/edges.geojson || true
+      - name: Pull LFS files
+        run: git lfs pull
 
-      # 2) Tippecanoe for vector tiling
       - name: Install tippecanoe
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y tippecanoe
+        uses: mapbox/setup-tippecanoe@v3
 
-      # 3) Python pmtiles CLI (rock-solid on Actions)
-      - name: Set up Python and pmtiles
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install python packages
+
+      - name: Install pmtiles (Python CLI)
         run: |
           python -m pip install --upgrade pip
-          pip install pmtiles
+          pip install "pmtiles>=4,<5"
+          # ensure the CLI script is on PATH if pip installs to ~/.local/bin
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      # 4) Convert GeoJSON → MBTiles → PMTiles
       - name: Convert to PMTiles
         run: |
           mkdir -p docs/data/app
           tippecanoe -o edges.mbtiles docs/data/app/edges.geojson \
             --layer=edges --no-feature-limit --no-tile-size-limit \
             --maximum-zoom=16 --drop-densest-as-needed
-          # option A: console entry-point
-            pmtiles convert edges.mbtiles docs/data/app/edges.pmtiles
+          # IMPORTANT: use the CLI module (NOT python -m pmtiles)
+          python -m pmtiles.cli convert edges.mbtiles docs/data/app/edges.pmtiles
           rm -f edges.mbtiles
 
-      # 5) Commit the tiles back to the repo
       - name: Commit tiles
         run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add docs/data/app/edges.pmtiles
-          git commit -m "Add or update edges.pmtiles" || echo "No changes"
+          git commit -m "Add/update edges.pmtiles" || echo "No changes"
           git push
