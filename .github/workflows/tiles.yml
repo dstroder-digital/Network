@@ -1,11 +1,12 @@
 name: Build PMTiles from edges.geojson
-
 on:
   workflow_dispatch:
   push:
     paths:
-      - "docs/data/app/edges.geojson"
-      - ".github/workflows/tiles.yml"
+      - 'docs/data/app/edges.geojson'
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -15,27 +16,22 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: true
-
-      - name: Pull LFS files
-        run: git lfs pull
+      - run: git lfs pull
 
       - name: Install tippecanoe
         run: |
           sudo apt-get update
           sudo apt-get install -y tippecanoe
 
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
       - name: Install pmtiles (Python CLI)
         run: |
           python -m pip install --upgrade pip
-          pip install "pmtiles>=4,<5"
-          # ensure the CLI script is on PATH if pip installs to ~/.local/bin
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          pip install "pmtiles==3.5.0"
 
       - name: Convert to PMTiles
         run: |
@@ -43,7 +39,6 @@ jobs:
           tippecanoe -o edges.mbtiles docs/data/app/edges.geojson \
             --layer=edges --no-feature-limit --no-tile-size-limit \
             --maximum-zoom=16 --drop-densest-as-needed
-          # IMPORTANT: use the CLI module (NOT python -m pmtiles)
           python -m pmtiles.cli convert edges.mbtiles docs/data/app/edges.pmtiles
           rm -f edges.mbtiles
 
