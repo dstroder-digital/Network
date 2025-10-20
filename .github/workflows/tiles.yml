@@ -12,6 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pull the real GeoJSON from LFS (not just the pointer)
       - name: Pull LFS files
         run: |
           git lfs install
@@ -23,16 +24,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y tippecanoe
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      # ✅ Use the Python pmtiles CLI (rock solid on Actions)
+      - name: Set up Python and pmtiles
+        uses: actions/setup-python@v5
         with:
-          go-version: "1.24.x"
-
-      - name: Install pmtiles CLI
+          python-version: "3.11"
+      - name: Install python packages
         run: |
-          go install github.com/protomaps/pmtiles/cmd/pmtiles@latest
-          echo "$HOME/go/bin" >> $GITHUB_PATH
-          pmtiles --version
+          python -m pip install --upgrade pip
+          pip install pmtiles
 
       - name: Convert GeoJSON → MBTiles → PMTiles
         run: |
@@ -40,9 +40,8 @@ jobs:
           tippecanoe -o edges.mbtiles docs/data/app/edges.geojson \
             --layer=edges --no-feature-limit --no-tile-size-limit \
             --maximum-zoom=16 --drop-densest-as-needed
-          pmtiles convert edges.mbtiles docs/data/app/edges.pmtiles
+          python -m pmtiles convert edges.mbtiles docs/data/app/edges.pmtiles
           rm -f edges.mbtiles
-
 
       - name: Commit tiles
         run: |
