@@ -46,7 +46,8 @@ jobs:
           tippecanoe -o edges.mbtiles docs/data/app/edges.geojson \
             --layer=edges --no-feature-limit --no-tile-size-limit \
             --maximum-zoom=16 --drop-densest-as-needed
-          python -m pmtiles convert edges.mbtiles docs/data/app/edges.pmtiles
+          # option A: console entry-point
+            pmtiles convert edges.mbtiles docs/data/app/edges.pmtiles
           rm -f edges.mbtiles
 
       # 5) Commit the tiles back to the repo
