@@ -1,0 +1,40 @@
+name: Build PMTiles from edges.geojson
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "docs/data/app/edges.geojson"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tippecanoe
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tippecanoe
+
+      - name: Install pmtiles converter
+        run: |
+          curl -L https://github.com/protomaps/go-pmtiles/releases/latest/download/pmtiles-linux-amd64 \
+            -o pmtiles && chmod +x pmtiles
+
+      - name: Convert GeoJSON → MBTiles → PMTiles
+        run: |
+          mkdir -p docs/data/app
+          tippecanoe -o edges.mbtiles docs/data/app/edges.geojson \
+            --layer=edges --no-feature-limit --no-tile-size-limit \
+            --maximum-zoom=16 --drop-densest-as-needed
+          ./pmtiles convert edges.mbtiles docs/data/app/edges.pmtiles
+          rm -f edges.mbtiles pmtiles
+
+      - name: Commit tiles
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add docs/data/app/edges.pmtiles
+          git commit -m "Add or update edges.pmtiles" || echo "No changes"
+          git push
