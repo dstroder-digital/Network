@@ -1,0 +1,33 @@
+name: Build Vector Tiles
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/data/app/edges.geojson"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Tippecanoe (for vector tiles)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tippecanoe
+
+      - name: Generate PMTiles from GeoJSON
+        run: |
+          mkdir -p docs/data/app
+          tippecanoe -o docs/data/app/edges.pmtiles docs/data/app/edges.geojson \
+            --layer=edges --no-feature-limit --no-tile-size-limit --maximum-zoom=16 --drop-densest-as-needed
+
+      - name: Commit and push output
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add docs/data/app/edges.pmtiles
+          git commit -m "Build PMTiles for edges" || echo "No changes to commit"
+          git push
