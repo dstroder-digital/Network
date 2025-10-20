@@ -10,21 +10,26 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # 1) Checkout with LFS content pulled automatically
       - uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
 
-      # Pull the real GeoJSON from LFS (not just the pointer)
-      - name: Pull LFS files
+      # (debug) prove we have the real file, not an LFS pointer
+      - name: Show file info
         run: |
-          git lfs install
-          git lfs fetch --all
-          git lfs checkout
+          ls -lh docs/data/app
+          head -n 3 docs/data/app/edges.geojson || true
+          file docs/data/app/edges.geojson || true
 
+      # 2) Tippecanoe for vector tiling
       - name: Install tippecanoe
         run: |
           sudo apt-get update
           sudo apt-get install -y tippecanoe
 
-      # ✅ Use the Python pmtiles CLI (rock solid on Actions)
+      # 3) Python pmtiles CLI (rock-solid on Actions)
       - name: Set up Python and pmtiles
         uses: actions/setup-python@v5
         with:
@@ -34,7 +39,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install pmtiles
 
-      - name: Convert GeoJSON → MBTiles → PMTiles
+      # 4) Convert GeoJSON → MBTiles → PMTiles
+      - name: Convert to PMTiles
         run: |
           mkdir -p docs/data/app
           tippecanoe -o edges.mbtiles docs/data/app/edges.geojson \
@@ -43,6 +49,7 @@ jobs:
           python -m pmtiles convert edges.mbtiles docs/data/app/edges.pmtiles
           rm -f edges.mbtiles
 
+      # 5) Commit the tiles back to the repo
       - name: Commit tiles
         run: |
           git config user.name "github-actions"
