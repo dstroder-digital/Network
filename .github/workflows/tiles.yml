@@ -27,9 +27,9 @@ jobs:
       # 👇 correct download URL for pmtiles binary
       - name: Install pmtiles converter
         run: |
-          wget -q https://github.com/protomaps/PMTiles/releases/latest/download/pmtiles-linux-x64 -O pmtiles
+          curl -L -o pmtiles https://github.com/protomaps/go-pmtiles/releases/latest/download/pmtiles-linux-amd64
           chmod +x pmtiles
-          ./pmtiles --help | head -n 1
+          ./pmtiles --version
 
       - name: Convert GeoJSON → MBTiles → PMTiles
         run: |
