@@ -18,8 +18,8 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/
 #map{position:absolute;inset:0}
 .hud{position:absolute;top:12px;left:12px;z-index:20;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
 .hud h3{margin:0 0 6px 0;font-size:15px}.hud small{color:var(--muted)}
-.panel{position:absolute;top:12px;right:12px;z-index:20;width:min(480px,40vw);max-height:calc(100% - 24px);overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
-.row{display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:center}
+.panel{position:absolute;top:12px;right:12px;z-index:20;width:min(520px,42vw);max-height:calc(100% - 24px);overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
+.row{display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:center}
 .btn{padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:#151515;color:var(--text);cursor:pointer;font-size:13px}
 .btn.active{background:#1d2a36;border-color:#2c3a4b;color:#bfe1ff}
 .legend{display:flex;gap:10px;align-items:center;margin-top:6px;flex-wrap:wrap}
@@ -65,6 +65,17 @@ summary{cursor:pointer}
 
   <div class="divider"></div>
 
+  <div class="row">
+    <label>Edge color</label>
+    <div>
+      <button class="btn active" id="colorMetric">By ebetweenness</button>
+      <button class="btn" id="colorWeight">By weight</button>
+      <span class="small">Routing note: OSRM uses its own profile; your custom weights affect only coloring unless you run OSRM with a custom profile.</span>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
   <div class="details">
     <b>Rescue planner</b>
     <div class="small">Click map to set a rescue location. We’ll route to the most feasible <b>Fire</b> station, then to the most feasible <b>Medical</b> facility in one step (OSRM; prefers routes avoiding visible flood layers).</div>
@@ -72,10 +83,8 @@ summary{cursor:pointer}
   </div>
 
   <div class="divider"></div>
-  <div class="small">Edge metric: <span class="badge" id="metricBadge">ebetweenness</span></div>
-
   <div class="legend">
-    <span class="sw"></span><small>Edges (colored by ebetweenness)</small>
+    <span class="sw"></span><small>Edges</small>
     <span class="sw r1"></span><small>Rescue → Fire</small>
     <span class="sw r2"></span><small>Fire → Medical</small>
     <span class="sw fire"></span><small>Fire stations</small>
@@ -106,7 +115,7 @@ const MED_URL     = 'https://dstroder-digital.github.io/Network/data/app/medical
 const NFHL_URL    = 'https://dstroder-digital.github.io/Network/data/app/nfhl_dissolved.geojson';
 const FUTURE_URL  = 'https://dstroder-digital.github.io/Network/data/app/future_flood_dissolved.geojson';
 const METRICS_URL = 'https://dstroder-digital.github.io/Network/data/app/edge_metrics.json'; // JSON export from parquet
-const JSON_ID_FIELD = 'eid'; // your JSON uses 'eid'
+const JSON_ID_FIELD = 'eid'; // your JSON shows 'eid' in screenshot
 
 /* -------- Routing (OSRM): change to your own server for production -------- */
 const OSRM_BASE = 'https://router.project-osrm.org';
@@ -134,14 +143,15 @@ map.on('load',()=> {
 const arrowSvg='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M13 5l7 7-7 7v-4H4v-6h9V5z"/></svg>`);
 const fireTruck='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><g fill="#ff8a00"><path d="M7 34h30l8-10h9v16H7z"/><circle cx="19" cy="44" r="6" fill="#fff"/><circle cx="45" cy="44" r="6" fill="#fff"/><circle cx="19" cy="44" r="3" fill="#111"/><circle cx="45" cy="44" r="3" fill="#111"/></g><rect x="40" y="24" width="6" height="6" fill="#fff"/></svg>`);
 const medical='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="12" y="28" width="40" height="8" rx="2" fill="#e76f51"/><rect x="28" y="12" width="8" height="40" rx="2" fill="#e76f51"/><path d="M36 22c4 0 8 2 8 6s-4 6-8 6c-3 0-6 1-6 4 0 3 3 4 6 4" stroke="#fff" stroke-width="2" fill="none"/></svg>`);
+let iconOk = { fire:false, med:false };
 map.on('load',()=>{
   map.loadImage(arrowSvg,(e,img)=>{ if(!e) map.addImage('arrow',img,{pixelRatio:2}); });
-  map.loadImage(fireTruck,(e,img)=>{ if(!e) map.addImage('firetruck',img,{pixelRatio:2}); });
-  map.loadImage(medical,(e,img)=>{ if(!e) map.addImage('medicon',img,{pixelRatio:2}); });
+  map.loadImage(fireTruck,(e,img)=>{ if(!e){ map.addImage('firetruck',img,{pixelRatio:2}); iconOk.fire=true; }});
+  map.loadImage(medical,(e,img)=>{ if(!e){ map.addImage('medicon',img,{pixelRatio:2}); iconOk.med=true; }});
 });
 
 /* -------- Tile field discovery -------- */
-let SOURCE_LAYER='edges', weightField=null;
+let SOURCE_LAYER='edges';
 const fieldsUI=document.getElementById('fieldsList');
 const tiles = new pmtiles.PMTiles(PMTILES_URL.replace('pmtiles://',''));
 tiles.getMetadata().then(meta=>{
@@ -149,12 +159,11 @@ tiles.getMetadata().then(meta=>{
   if(names.length && !names.includes(SOURCE_LAYER)) SOURCE_LAYER=names[0];
   const attrs=(meta?.tilestats?.layers||[]).find(l=>l.layer===SOURCE_LAYER)?.attributes||[];
   if (attrs.length){ fieldsUI.innerHTML=attrs.map(a=>`• <code>${a.attribute}</code> <span class="small">(${a.type||'?'})</span>`).join('<br>'); }
-  const nums=attrs.filter(a=>a.type==='number').map(a=>a.attribute);
-  if (nums.includes('weight')) weightField='weight';
 }).catch(()=>{});
 
 /* -------- Build core layers -------- */
 let fireFC=null, medFC=null, nfhlFC=null, futureFC=null, metricMap=null;
+let colorMode='metric'; // 'metric' | 'weight'
 
 map.on('load', async ()=>{
   // edges
@@ -162,13 +171,13 @@ map.on('load', async ()=>{
   map.addLayer({id:'edges-line',type:'line',source:'edges','source-layer':SOURCE_LAYER,
     layout:{'line-cap':'round','line-join':'round'},
     paint:{
-      'line-color':'#29adff',  /* overridden by metric if JSON present */
+      'line-color':'#29adff', /* overridden by color mode */
       'line-opacity':0.95,
       'line-width':['interpolate',['linear'],['zoom'], 8,0.6, 12,1.3, 15,2.2]
     }
   });
 
-  // one-way arrows (default visible)
+  // one-way arrows
   map.addLayer({id:'oneway-arrows',type:'symbol',source:'edges','source-layer':SOURCE_LAYER,
     layout:{'symbol-placement':'line','symbol-spacing':60,'icon-image':'arrow','icon-size':0.55,'visibility':'visible'},
     filter:['any',
@@ -182,7 +191,7 @@ map.on('load', async ()=>{
     paint:{'icon-opacity':0.9}
   });
 
-  // nodes (always visible, subtle)
+  // nodes
   try{
     const nodes = await (await fetch(NODES_URL)).json();
     map.addSource('nodes',{type:'geojson',data:nodes});
@@ -194,8 +203,9 @@ map.on('load', async ()=>{
 
   await addPOIs();
   await loadFloods();
-  await loadMetrics();      // colors by ebetweenness if file present
-  addRescueGraphics();      // layers to draw routes/points
+  await loadMetrics();      // enables metric coloring
+  setColorMode('metric');   // start with ebetweenness
+  addRescueGraphics();      // routes & point layers
   wireUI();
 });
 
@@ -205,9 +215,18 @@ async function addPOIs(){
     fireFC = await (await fetch(FIRE_URL)).json();
     console.log('Fire stations:', fireFC.features?.length ?? 0);
     map.addSource('fire',{type:'geojson',data:fireFC});
-    map.addLayer({id:'fire',type:'symbol',source:'fire',layout:{
-      'icon-image':'firetruck','icon-size':['interpolate',['linear'],['zoom'],8,0.45,12,0.65,15,0.85],'icon-allow-overlap':true,'visibility':'visible'
-    }});
+    // icon layer (if icon loaded)
+    map.addLayer({id:'fire-ic',type:'symbol',source:'fire',layout:{
+      'icon-image':'firetruck','icon-size':['interpolate',['linear'],['zoom'],8,0.7,12,0.9,15,1.05],
+      'icon-allow-overlap':true,'text-field':['coalesce',['get','name'],'Fire station'],
+      'text-font':['Open Sans Semibold','Arial Unicode MS Bold'],'text-size':11,'text-offset':[0,1.1],
+      'text-anchor':'top','visibility': iconOk.fire?'visible':'none'
+    },paint:{'text-halo-color':'#000','text-halo-width':1.2}});
+    // circle fallback (always visible; mostly redundant when icons present)
+    map.addLayer({id:'fire-pt',type:'circle',source:'fire',
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,3,12,4.5,15,6],
+             'circle-color':'#ff8a00','circle-stroke-color':'#111','circle-stroke-width':1,
+             'circle-opacity': iconOk.fire?0.3:0.9 }});
   }catch(err){ console.warn('Fire stations failed:', err); }
 
   try{
@@ -215,9 +234,16 @@ async function addPOIs(){
     medFC = {type:'FeatureCollection',features:(medAll.features||[]).filter(f=>(f.properties?.name||'').trim().length>0)};
     console.log('Medical facilities (named):', medFC.features?.length ?? 0);
     map.addSource('med',{type:'geojson',data:medFC});
-    map.addLayer({id:'med',type:'symbol',source:'med',layout:{
-      'icon-image':'medicon','icon-size':['interpolate',['linear'],['zoom'],8,0.45,12,0.65,15,0.85],'icon-allow-overlap':true,'visibility':'visible'
-    }});
+    map.addLayer({id:'med-ic',type:'symbol',source:'med',layout:{
+      'icon-image':'medicon','icon-size':['interpolate',['linear'],['zoom'],8,0.7,12,0.9,15,1.05],
+      'icon-allow-overlap':true,'text-field':['get','name'],
+      'text-font':['Open Sans Semibold','Arial Unicode MS Bold'],'text-size':11,'text-offset':[0,1.1],
+      'text-anchor':'top','visibility': iconOk.med?'visible':'none'
+    },paint:{'text-halo-color':'#000','text-halo-width':1.2}});
+    map.addLayer({id:'med-pt',type:'circle',source:'med',
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,3,12,4.5,15,6],
+             'circle-color':'#e76f51','circle-stroke-color':'#111','circle-stroke-width':1,
+             'circle-opacity': iconOk.med?0.3:0.9 }});
   }catch(err){ console.warn('Medical facilities failed:', err); }
 }
 
@@ -236,40 +262,61 @@ async function loadFloods(){
 /* -------- Metrics (ebetweenness) -------- */
 async function loadMetrics(){
   try{
-    const arr = await (await fetch(METRICS_URL,{mode:'cors'})).json(); // [{eid, ebetweenness, ...}]
+    const arr = await (await fetch(METRICS_URL,{mode:'cors'})).json(); // [{eid, ebetweenness, weight, ...}]
     metricMap = new Map(arr.map(o => [ String(o[JSON_ID_FIELD]), +o.ebetweenness ]));
-    // color edges by metric using feature-state (viewport join via eid)
-    map.setPaintProperty('edges-line','line-color',
-      ['interpolate',['linear'],['coalesce',['feature-state','m'],0],
-        0,'#264653', 0.33,'#2a9d8f', 0.66,'#e9c46a', 1,'#f4a261'
-      ]);
+    // store weights too for weight mode
+    weightMap  = new Map(arr.map(o => [ String(o[JSON_ID_FIELD]), +o.weight ]));
+    console.log('Metrics loaded:', metricMap.size, 'weights:', weightMap.size);
 
-    // keep painting metric values for visible features
+    // attach metric state on render (viewport join)
     map.on('render', throttle(()=>{
       const bbox=[[0,0],[map.getCanvas().width, map.getCanvas().height]];
       const feats=map.queryRenderedFeatures(bbox,{layers:['edges-line']});
       for(const f of feats){
         const eid = f.properties?.eid ?? f.properties?.id;
         const m = metricMap.get(String(eid));
-        if (typeof m === 'number') {
-          map.setFeatureState({source:'edges',sourceLayer:SOURCE_LAYER,id:f.id},{m});
-        }
+        const w = weightMap.get(String(eid));
+        // stash both in feature-state; used by color mode
+        map.setFeatureState({source:'edges',sourceLayer:SOURCE_LAYER,id:f.id},{m: (typeof m==='number'?m:null), w: (typeof w==='number'?w:null)});
       }
     }, 400));
-    console.log('Metrics loaded:', metricMap.size);
   }catch(err){
-    console.warn('Metrics JSON not loaded — edges remain solid color.', err);
+    console.warn('Metrics JSON not loaded — edges will stay solid or weight mode limited.', err);
   }
+}
+let weightMap = new Map();
+
+/* -------- Color modes -------- */
+function setColorMode(mode){
+  colorMode = mode;
+  document.getElementById('colorMetric').classList.toggle('active', mode==='metric');
+  document.getElementById('colorWeight').classList.toggle('active', mode==='weight');
+
+  if(mode==='metric'){
+    map.setPaintProperty('edges-line','line-color',
+      ['interpolate',['linear'],['coalesce',['feature-state','m'],0],
+        0,'#264653', 0.33,'#2a9d8f', 0.66,'#e9c46a', 1,'#f4a261'
+      ]);
+  }else{
+    // Normalize weight approx: clip to [0, 300] then map
+    map.setPaintProperty('edges-line','line-color',
+      ['interpolate',['linear'],
+        ['min',300, ['max',0, ['coalesce',['feature-state','w'], ['to-number',['get','weight'],0] ] ] ],
+        0,'#293241', 100,'#5a9fd6', 200,'#7bdcb5', 300,'#fcca46'
+      ]);
+  }
+}
+function wireUI(){
+  document.getElementById('colorMetric').onclick=()=>setColorMode('metric');
+  document.getElementById('colorWeight').onclick=()=>setColorMode('weight');
 }
 
 /* -------- Rescue routing pipeline -------- */
 function addRescueGraphics(){
   map.addSource('rescue_pt',{type:'geojson',data:turf.featureCollection([])});
   map.addLayer({id:'rescue_pt',type:'circle',source:'rescue_pt',paint:{'circle-radius':6,'circle-color':'#ffffff','circle-stroke-color':'#111','circle-stroke-width':1}});
-
   map.addSource('route_fire',{type:'geojson',data:turf.featureCollection([])});
   map.addLayer({id:'route_fire',type:'line',source:'route_fire',paint:{'line-color':'#ffd34d','line-width':4}});
-
   map.addSource('route_med',{type:'geojson',data:turf.featureCollection([])});
   map.addLayer({id:'route_med',type:'line',source:'route_med',paint:{'line-color':'#9ae6b4','line-width':4}});
 }
@@ -288,12 +335,12 @@ map.on('click', async (e)=>{
   const avoidPolys = (map.getLayoutProperty('nfhl','visibility')==='visible' || map.getLayoutProperty('future','visibility')==='visible')
     ? [...(nfhlFC?.features||[]), ...(futureFC?.features||[])] : [];
 
-  // choose fire → then medical
+  // choose fire → then medical (prefer outside visible flood)
   const fireChoice = pickFacility(rescuePt, fireFC, avoidPolys);
   const fireCoord = fireChoice?.feature?.geometry?.coordinates;
   const medChoice = fireCoord ? pickFacility(fireCoord, medFC, avoidPolys) : null;
 
-  // route with OSRM (pick alternative with least flooded overlap)
+  // route with OSRM (minimize flooded overlap)
   const A = fireChoice?.feature ? await routeOSRM(rescuePt, fireChoice.feature.geometry.coordinates, avoidPolys) : null;
   const B = (fireCoord && medChoice?.feature) ? await routeOSRM(fireCoord, medChoice.feature.geometry.coordinates, avoidPolys) : null;
 
@@ -321,7 +368,7 @@ function pickFacility(originLngLat, fc, floodPolys){
     const d=turf.distance(p0, turf.point(p), {units:'miles'});
     if(d<bestD){best=f;bestD=d;}
   }
-  if(!best){ // all filtered? choose nearest regardless
+  if(!best){ // all filtered? choose nearest anyway
     for(const f of fc.features){
       const p=f.geometry?.coordinates; if(!p) continue;
       const d=turf.distance(p0, turf.point(p), {units:'miles'});
@@ -343,7 +390,6 @@ async function routeOSRM(a,b,floodPolys){
     }));
     if(!routes.length) return null;
 
-    // choose route minimizing flooded overlap length when overlays visible
     function floodOverlap(line){
       if(!floodPolys.length) return 0;
       let total=0;
@@ -375,6 +421,8 @@ document.getElementById('floodOpacity').addEventListener('input', e=>{
   const v=+e.target.value; if(map.getLayer('nfhl')) map.setPaintProperty('nfhl','fill-opacity', v);
   if(map.getLayer('future')) map.setPaintProperty('future','fill-opacity', v);
 });
+document.getElementById('colorMetric').addEventListener('click', ()=>setColorMode('metric'));
+document.getElementById('colorWeight').addEventListener('click', ()=>setColorMode('weight'));
 
 /* -------- Edge property table / tip -------- */
 const tipEl=document.getElementById('tip'); const propsEl=document.getElementById('propTable');
@@ -386,9 +434,7 @@ map.on('mousemove', e=>{
   const f=map.queryRenderedFeatures(e.point,{layers:['edges-line']})[0];
   if(!f){ if(!lastPinned) tipEl.classList.add('hidden'); return; }
   const nm=f.properties?.name||f.properties?.ref||'Edge';
-  const eid=f.properties?.eid ?? f.properties?.id;
-  const m = metricMap ? metricMap.get(String(eid)) : null;
-  tipEl.innerHTML=`<strong>${esc(nm)}</strong>${m!=null?` — ebetweenness: ${(+m).toExponential(2)}`:''}`;
+  tipEl.innerHTML=`<strong>${esc(nm)}</strong>`;
   tipEl.style.left=e.originalEvent.clientX+'px'; tipEl.style.top=e.originalEvent.clientY+'px';
   tipEl.classList.remove('hidden');
 });
