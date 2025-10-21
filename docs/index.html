@@ -17,12 +17,13 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/
 #map{position:absolute;inset:0}
 .hud{position:absolute;top:12px;left:12px;z-index:20;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
 .hud h3{margin:0 0 6px 0;font-size:15px} .hud small{color:var(--muted)}
-.panel{position:absolute;top:12px;right:12px;z-index:20;width:min(420px,36vw);max-height:calc(100% - 24px);overflow:auto;
+.panel{position:absolute;top:12px;right:12px;z-index:20;width:min(430px,36vw);max-height:calc(100% - 24px);overflow:auto;
        background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
 .row{display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:center}
 .btnbar{display:flex;flex-wrap:wrap;gap:6px}
 .btn{padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:#151515;color:var(--text);cursor:pointer;font-size:13px}
 .btn.active{background:#1d2a36;border-color:#2c3a4b;color:#bfe1ff}
+.btn:disabled{opacity:.45;cursor:not-allowed}
 .legend{display:flex;gap:10px;align-items:center;margin-top:6px}
 .sw{width:24px;height:8px;border-radius:5px;background:var(--blue)}
 .sw.gold{background:var(--gold)} .sw.poi{background:var(--poi)} .sw.med{background:var(--med)}
@@ -62,11 +63,12 @@ summary{cursor:pointer}
     <div class="btnbar" id="colorBar">
       <button class="btn active" data-color="solid">Solid</button>
       <button class="btn" data-color="weight" id="byWeightBtn">By weight</button>
-      <button class="btn" data-color="class">By class</button>
+      <button class="btn" data-color="class"  id="byClassBtn">By class</button>
       <button class="btn" data-color="metric" id="metricBtn" style="display:none">By metric</button>
     </div>
   </div>
   <div class="small" id="weightHint" style="margin:-6px 0 6px 0;"></div>
+  <div class="small" id="classHint"  style="margin:-6px 0 6px 0;"></div>
 
   <div class="row" id="metricRow" style="display:none">
     <label>Metric</label>
@@ -148,7 +150,8 @@ const FIRE_URL    = 'https://dstroder-digital.github.io/Network/data/app/fire_st
 const MED_URL     = 'https://dstroder-digital.github.io/Network/data/app/medical_facilities.geojson';
 const NFHL_URL    = 'https://dstroder-digital.github.io/Network/data/app/nfhl_dissolved.geojson';
 const FUTURE_URL  = 'https://dstroder-digital.github.io/Network/data/app/future_flood_dissolved.geojson';
-const METRICS_URL = null; // e.g. './data/app/edge_metrics.json'
+const METRICS_URL = null;                 // e.g. './data/app/edge_metrics.json'
+const GRAPH_URL   = './data/app/graph.json'; // OPTIONAL: enables true street routing if present
 
 /* ---------- PMTiles protocol (guard) ---------- */
 if (!window.__pmtilesProto) {
@@ -164,105 +167,102 @@ const map = new maplibregl.Map({
 });
 map.addControl(new maplibregl.NavigationControl({visualizePitch:true}), 'top-right');
 map.addControl(new maplibregl.ScaleControl({maxWidth:160, unit:'imperial'}));
-
-/* ---------- Dark basemap ---------- */
 map.on('load',()=> {
   map.addSource('dark',{type:'raster',tiles:['https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png'],tileSize:256,attribution:'© Stadia Maps, © OpenMapTiles, © OpenStreetMap'});
   map.addLayer({id:'dark',type:'raster',source:'dark'}, 'bg');
 });
 
 /* ---------- One-way arrow sprite ---------- */
-const arrowSvg='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="white" opacity="0.85"><path d="M13 5l7 7-7 7v-4H4v-6h9V5z"/></svg>`);
+const arrowSvg='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="white" opacity="0.9"><path d="M13 5l7 7-7 7v-4H4v-6h9V5z"/></svg>`);
 map.on('load',()=>{ map.loadImage(arrowSvg,(e,img)=>{ if(!e) map.addImage('arrow', img,{pixelRatio:2}); }); });
 
-/* ---------- Source-layer autodetect + fields ---------- */
+/* ---------- Detect fields from metadata ---------- */
 let SOURCE_LAYER='edges';
 let weightField=null;
-const weightHint=document.getElementById('weightHint');
+let classField=null;
 const fieldsUI=document.getElementById('fieldsList');
+const weightHint=document.getElementById('weightHint');
+const classHint=document.getElementById('classHint');
 
 const tiles = new pmtiles.PMTiles(PMTILES_URL.replace('pmtiles://',''));
 tiles.getMetadata().then(meta=>{
   const names=(meta?.vector_layers||[]).map(v=>v.id);
   if(names.length && !names.includes(SOURCE_LAYER)) SOURCE_LAYER=names[0];
 
-  // Show attributes
   const attrs=(meta?.tilestats?.layers||[]).find(l=>l.layer===SOURCE_LAYER)?.attributes||[];
   if (attrs.length){
     fieldsUI.innerHTML=attrs.map(a=>`• <code>${a.attribute}</code> <span class="small">(${a.type||'?'})</span>`).join('<br>');
   }
 
-  // Pick weight field
-  const pref=['count','weight','edge_weight','aadt','traffic','volume'];
+  // pick weight field
+  const prefW=['count','weight','edge_weight','aadt','traffic','volume'];
   const nums=attrs.filter(a=>a.type==='number').map(a=>a.attribute);
-  for (const k of pref){ if(nums.includes(k)) { weightField=k; break; } }
+  for (const k of prefW){ if(nums.includes(k)) { weightField=k; break; } }
   if (!weightField && nums.length) weightField=nums[0];
-
   if (weightField){
     weightHint.innerHTML=`Weight field: <b><code>${weightField}</code></b>.`;
   } else {
-    weightHint.innerHTML=`No numeric field found for weighting; weight/“By weight” disabled.`;
+    weightHint.innerHTML=`No numeric field found → “By weight” & “Weighted edges” disabled.`;
     document.getElementById('byWeightBtn').disabled=true;
+  }
+
+  // pick class field
+  const prefC=['functional_class','road_class','class','cfcc','highway','rdclass'];
+  const strs=attrs.filter(a=>a.type!=='number').map(a=>a.attribute);
+  for (const k of prefC){ if(strs.includes(k)) { classField=k; break; } }
+  if (classField){
+    classHint.innerHTML=`Class field: <b><code>${classField}</code></b>.`;
+  } else {
+    classHint.innerHTML=`No class-like field found → “By class” disabled.`;
+    document.getElementById('byClassBtn').disabled=true;
   }
 }).catch(()=>{});
 
-/* ---------- Colors ---------- */
-function weightRamp(){
-  return ['interpolate',['linear'],['coalesce',['to-number',['get', weightField||'__none__']],0],
-    0,'#24496b', 5,'#2f6f9b', 20,'#3e8ec3', 50,'#55b0ec', 150,'#9ad0ff', 400,'#cfe6ff'
-  ];
-}
-const classRamp=['match',['downcase',['coalesce',['get','functional_class'],'']],
-  'motorway','#ff7a00','trunk','#ffcc00','primary','#ffd34d','secondary','#66d17a',
-  'tertiary','#8bd7a2','residential','#29adff','service','#b1b8c7','#29adff'
-];
-
-/* ---------- Build edges & layers ---------- */
+/* ---------- Build edges ---------- */
 let colorMode='solid', metrics=null, metricName='betweenness', metricDomain=[0,1];
 
 map.on('load', async ()=>{
   map.addSource('edges',{type:'vector',url:PMTILES_URL});
-
   map.addLayer({id:'edges-line',type:'line',source:'edges','source-layer':SOURCE_LAYER,
     layout:{'line-cap':'round','line-join':'round'},
-    paint:{
-      'line-color':'#29adff',
-      'line-width':['interpolate',['linear'],['zoom'], 8,0.6, 12,1.3, 15,2.2],
-      'line-opacity':0.95
+    paint:{ 'line-color':'#29adff','line-opacity':0.95,
+      'line-width':['interpolate',['linear'],['zoom'], 8,0.6, 12,1.3, 15,2.2]
     }
   });
 
-  // Weighted overlay (uses detected weightField; always visible when toggled)
+  // Weighted overlay
   map.addLayer({id:'edges-weighted',type:'line',source:'edges','source-layer':SOURCE_LAYER,
     layout:{'line-cap':'round','line-join':'round','visibility':'none'},
     paint:{
-      'line-color': ['case', ['has', weightField||'__none__'], '#9bf6ff', '#9bf6ff'],
-      'line-width':['interpolate',['linear'],['coalesce',['to-number',['get',weightField||'__none__']],0],
-        0,0.0, 5,1.5, 20,3.5, 50,6, 150,9, 400,13],
-      'line-opacity':0.95
+      'line-color':'#9bf6ff',
+      'line-opacity':0.95,
+      'line-width':['interpolate',['linear'],
+        ['coalesce',['to-number',['get',weightField||'__none__']],0], 0,0, 5,1.5, 20,3.5, 50,6, 150,9, 400,13]
     }
   });
 
-  // One-way arrows (very broad truthy filter)
+  // One-way arrows (includes 'direction' mapped values)
   map.addLayer({id:'oneway-arrows',type:'symbol',source:'edges','source-layer':SOURCE_LAYER,
     layout:{'symbol-placement':'line','symbol-spacing':60,'icon-image':'arrow','icon-size':0.55,'visibility':'none'},
     filter:['any',
       ['==',['downcase',['get','oneway']],'yes'],
       ['==',['downcase',['get','one_way']],'yes'],
-      ['in',['to-string',['get','oneway']],['literal',['1','true','True','y','Y','Yes']]],
-      ['in',['to-string',['get','is_oneway']],['literal',['1','true','True','y','Y','Yes']]]
+      ['==',['downcase',['get','is_oneway']],'yes'],
+      ['==',['downcase',['get','direction']],'one-way'],
+      ['==',['downcase',['get','dir']],'one-way'],
+      ['in',['to-string',['get','oneway']],['literal',['1','true','True','y','Y','Yes']]]
     ],
-    paint:{'icon-opacity':0.85}
+    paint:{'icon-opacity':0.9}
   });
 
   await addOptionals();
   await maybeLoadMetrics();
+  await maybeLoadGraph();
   wireUI();
 });
 
-/* ---------- Optional sources/layers & data copies for rescue ---------- */
+/* ---------- Optional layers ---------- */
 let fireFC=null, medFC=null, nfhlFC=null, futureFC=null;
-
 async function addOptionals(){
   // Nodes
   try{
@@ -281,26 +281,34 @@ async function addOptionals(){
     map.addLayer({id:'fire',type:'circle',source:'fire',layout:{visibility:'none'},
       paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,2.2,12,3.8,15,5.2],
              'circle-color':'#f4a261','circle-stroke-color':'#111','circle-stroke-width':0.5}});
-  }catch(_){ document.getElementById('toggleFire').disabled=true; }
+  }catch(_){document.getElementById('toggleFire').disabled=true;}
 
-  // Medical
-  try{
-    medFC = await (await fetch(MED_URL)).json();
+  // Medical (filter out unnamed facilities)
+  try {
+    const medAll = await (await fetch(MED_URL)).json();
+    medFC = {
+      type: "FeatureCollection",
+      features: (medAll.features || []).filter(
+        f => (f.properties?.name || "").trim().length > 0
+      )
+    };
     map.addSource('med',{type:'geojson',data:medFC});
     map.addLayer({id:'med',type:'circle',source:'med',layout:{visibility:'none'},
       paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,2.2,12,3.8,15,5.2],
              'circle-color':'#e76f51','circle-stroke-color':'#111','circle-stroke-width':0.5}});
-  }catch(_){ document.getElementById('toggleMedical').disabled=true; }
+  } catch(_) {
+    document.getElementById('toggleMedical').disabled = true;
+  }
 
-  // Floods (keep copies for rescue filter)
+  // Floods
   try{ nfhlFC = await (await fetch(NFHL_URL)).json();
        map.addSource('nfhl',{type:'geojson',data:nfhlFC});
        map.addLayer({id:'nfhl',type:'fill',source:'nfhl',layout:{visibility:'none'},
-         paint:{'fill-color':'#38bdf8','fill-opacity':0.35,'fill-outline-color':'#0ea5e9'}}); }catch(_){}
+         paint:{'fill-color':'#38bdf8','fill-opacity':0.35,'fill-outline-color':'#0ea5e9'}});}catch(_){}
   try{ futureFC = await (await fetch(FUTURE_URL)).json();
        map.addSource('future',{type:'geojson',data:futureFC});
        map.addLayer({id:'future',type:'fill',source:'future',layout:{visibility:'none'},
-         paint:{'fill-color':'#22d3ee','fill-opacity':0.35,'fill-outline-color':'#06b6d4'}}); }catch(_){}
+         paint:{'fill-color':'#22d3ee','fill-opacity':0.35,'fill-outline-color':'#06b6d4'}});}catch(_){}
 
   // Rescue graphics
   map.addSource('rescue_pt',{type:'geojson',data:turf.featureCollection([])});
@@ -308,7 +316,8 @@ async function addOptionals(){
     paint:{'circle-radius':6,'circle-color':'#fff','circle-stroke-color':'#111','circle-stroke-width':1}});
 
   map.addSource('rescue_conn',{type:'geojson',data:turf.featureCollection([])});
-  map.addLayer({id:'rescue_conn',type:'line',source:'rescue_conn',paint:{'line-color':'#22c55e','line-width':3,'line-dasharray':[2,2]}});
+  map.addLayer({id:'rescue_conn',type:'line',source:'rescue_conn',
+    paint:{'line-color':'#22c55e','line-width':3,'line-dasharray':[2,2]}});
 }
 
 /* ---------- Metrics (optional) ---------- */
@@ -330,22 +339,45 @@ function setMetricDomain(){
   metricDomain=[vals[Math.floor(vals.length*0.02)], vals[Math.floor(vals.length*0.98)]];
 }
 
+/* ---------- Graph routing (optional) ---------- */
+let GRAPH=null; // {nodes:{id:[lng,lat]}, edges:[{u,v,w}], units:'miles'|'minutes', speed_mph_default?:num}
+async function maybeLoadGraph(){
+  try{
+    const resp = await fetch(GRAPH_URL, {mode:'cors'});
+    if(!resp.ok) return;
+    GRAPH = await resp.json();
+    // Add a line style for true route
+    map.addSource('route_true',{type:'geojson',data:turf.featureCollection([])});
+    map.addLayer({id:'route_true',type:'line',source:'route_true',
+      paint:{'line-color':'#ffd34d','line-width':4}});
+  }catch(_){}
+}
+
 /* ---------- UI wiring ---------- */
 function wireUI(){
   const colorBar=document.getElementById('colorBar');
   colorBar.addEventListener('click', e=>{
     const b=e.target.closest('.btn'); if(!b) return;
-    colorMode=b.dataset.color; setActive(colorBar,b);
+    const mode=b.dataset.color;
+    if (mode==='weight' && !weightField) return;
+    if (mode==='class'  && !classField)  return;
+    if (mode==='metric' && !metrics){ alert('Metrics file not loaded.'); return; }
+    colorMode=mode; setActive(colorBar,b);
 
     if(colorMode==='solid'){
       map.setPaintProperty('edges-line','line-color','#29adff');
     }else if(colorMode==='class'){
-      map.setPaintProperty('edges-line','line-color', classRamp);
+      map.setPaintProperty('edges-line','line-color',
+        ['match',['downcase',['coalesce',['get',classField],'' ]],
+          'motorway','#ff7a00','trunk','#ffcc00','primary','#ffd34d','secondary','#66d17a',
+          'tertiary','#8bd7a2','residential','#29adff','service','#b1b8c7','#29adff'
+        ]);
     }else if(colorMode==='weight'){
-      if (!weightField){ alert('No numeric field in tiles to use as weight.'); return;}
-      map.setPaintProperty('edges-line','line-color', weightRamp());
+      map.setPaintProperty('edges-line','line-color',
+        ['interpolate',['linear'],['coalesce',['to-number',['get',weightField]],0],
+          0,'#24496b', 5,'#2f6f9b', 20,'#3e8ec3', 50,'#55b0ec', 150,'#9ad0ff', 400,'#cfe6ff'
+        ]);
     }else if(colorMode==='metric'){
-      if(!metrics){ alert('Metrics file not loaded.'); return; }
       map.setPaintProperty('edges-line','line-color',
         ['interpolate',['linear'],['coalesce',['feature-state',metricName],['to-number',['get',metricName]],0],
           metricDomain[0],'#264653',(metricDomain[0]+metricDomain[1])/2,'#2a9d8f',metricDomain[1],'#e9c46a']);
@@ -361,7 +393,7 @@ function wireUI(){
     }
   });
 
-  bindToggle('toggleWeighted', v=> map.setLayoutProperty('edges-weighted','visibility', v?'visible':'none'));
+  bindToggle('toggleWeighted', v=> map.setLayoutProperty('edges-weighted','visibility', (v && weightField)?'visible':'none'));
   bindToggle('toggleArrows',   v=> map.setLayoutProperty('oneway-arrows','visibility', v?'visible':'none'));
   bindToggle('toggleNodes',    v=> map.setLayoutProperty('nodes','visibility', v?'visible':'none'));
   bindToggle('toggleFire',     v=> map.setLayoutProperty('fire','visibility', v?'visible':'none'));
@@ -374,25 +406,18 @@ function wireUI(){
     if(map.getLayer('future')) map.setPaintProperty('future','fill-opacity', v);
   });
 
-  // Rescue destination type
-  document.getElementById('destFire').addEventListener('click', e=>{
-    destMode='fire'; setActive(e.currentTarget.parentElement, e.currentTarget); recomputeRescue();
-  });
-  document.getElementById('destMed').addEventListener('click', e=>{
-    destMode='medical'; setActive(e.currentTarget.parentElement, e.currentTarget); recomputeRescue();
-  });
+  document.getElementById('destFire').addEventListener('click', e=>{ setActive(e.currentTarget.parentElement, e.currentTarget); destMode='fire'; recomputeRescue(); });
+  document.getElementById('destMed').addEventListener('click', e=>{ setActive(e.currentTarget.parentElement, e.currentTarget); destMode='medical'; recomputeRescue(); });
   document.getElementById('clearRescue').addEventListener('click', clearRescue);
 
   document.getElementById('toggleRaw').addEventListener('click', e=>{
-    e.preventDefault(); showRaw=!showRaw; if(lastProps) propsEl.innerHTML=renderTable(cleanProps(lastProps));
+    e.preventDefault(); showRaw=!showRaw; if(lastProps) propsEl.innerHTML=renderTable(showRaw?lastProps:cleanProps(lastProps));
   });
 
   // Click map: pin edge if hit; otherwise set rescue point
   map.on('click', (e)=>{
     const feats = map.queryRenderedFeatures(e.point,{layers:['edges-line','edges-weighted']});
-    if (feats.length){
-      lastProps=feats[0].properties||{}; lastPinned=true; propsEl.innerHTML=renderTable(cleanProps(lastProps)); return;
-    }
+    if (feats.length){ lastProps=feats[0].properties||{}; lastPinned=true; propsEl.innerHTML=renderTable(cleanProps(lastProps)); return; }
     setRescuePoint([e.lngLat.lng,e.lngLat.lat]);
   });
 
@@ -421,6 +446,7 @@ function clearRescue(){
   rescuePt=null;
   map.getSource('rescue_pt').setData(turf.featureCollection([]));
   map.getSource('rescue_conn').setData(turf.featureCollection([]));
+  if(map.getSource('route_true')) map.getSource('route_true').setData(turf.featureCollection([]));
   rescueInfo.textContent='';
 }
 
@@ -429,111 +455,128 @@ function recomputeRescue(){
   const fc = destMode==='fire' ? fireFC : medFC;
   if(!fc || !fc.features){ rescueInfo.textContent='Destination dataset not loaded.'; return; }
 
-  // Optional: ignore facilities inside visible floods
+  // If we have a graph, do true routing to nearest facility (by graph)
+  if (GRAPH){
+    const out = routeOnGraph(rescuePt, fc);
+    if (!out){ rescueInfo.textContent='No route found in graph.'; return; }
+    const {line, miles, eta, reason, name} = out;
+    map.getSource('route_true').setData(turf.featureCollection([line]));
+    map.getSource('rescue_conn').setData(turf.featureCollection([])); // hide straight connector
+    rescueInfo.innerHTML = `<b>Rescue → ${esc(name)}</b><br>Reason: ${reason}<br>Distance: ${miles.toFixed(2)} mi • ETA: ${Math.round(eta)} min`;
+    return;
+  }
+
+  // Fallback: nearest by distance (straight line), avoiding flooded facilities when visible
   const floodAvoid = (map.getLayoutProperty('nfhl','visibility')==='visible' || map.getLayoutProperty('future','visibility')==='visible');
-  const polys = [];
-  if (floodAvoid){
-    if(nfhlFC?.features) polys.push(...nfhlFC.features);
-    if(futureFC?.features) polys.push(...futureFC.features);
-  }
-
-  let best=null, bestD=Infinity, filtered=0;
-  const p0=turf.point(rescuePt);
-  for (const f of fc.features){
+  const polys=[]; if(floodAvoid){ if(nfhlFC?.features) polys.push(...nfhlFC.features); if(futureFC?.features) polys.push(...futureFC.features); }
+  let best=null,bestD=Infinity,filtered=0; const p0=turf.point(rescuePt);
+  for(const f of fc.features){
     const p=f.geometry?.coordinates; if(!p) continue;
-    if (floodAvoid && polys.length){
-      const inFlood = polys.some(poly=>turf.booleanPointInPolygon(turf.point(p), poly));
-      if (inFlood){ filtered++; continue; }
-    }
-    const d=turf.distance(p0, turf.point(p), {units:'miles'});
-    if (d<bestD){ best=f; bestD=d; }
+    if (polys.length && polys.some(poly=>turf.booleanPointInPolygon(turf.point(p), poly))){ filtered++; continue; }
+    const d=turf.distance(p0, turf.point(p), {units:'miles'}); if(d<bestD){best=f;bestD=d;}
   }
-  // fallback if all filtered
-  if(!best){
-    for (const f of fc.features){
-      const p=f.geometry?.coordinates; if(!p) continue;
-      const d=turf.distance(p0, turf.point(p), {units:'miles'});
-      if (d<bestD){ best=f; bestD=d; }
-    }
-  }
+  if(!best){ for(const f of fc.features){ const p=f.geometry?.coordinates; if(!p) continue; const d=turf.distance(p0, turf.point(p), {units:'miles'}); if(d<bestD){best=f;bestD=d;} } }
   if(!best){ rescueInfo.textContent='No nearby facility found.'; return; }
-
-  // Draw connector and compute proxy ETA
-  const line=turf.lineString([rescuePt, best.geometry.coordinates]);
-  map.getSource('rescue_conn').setData(turf.featureCollection([line]));
-
-  const speed=25; // mph
-  const detour = floodAvoid ? 1.35 : 1.15;
-  const miles = bestD * detour;
-  const eta = Math.round((miles/speed)*60);
-
+  const line=turf.lineString([rescuePt, best.geometry.coordinates]); map.getSource('rescue_conn').setData(turf.featureCollection([line]));
+  if(map.getSource('route_true')) map.getSource('route_true').setData(turf.featureCollection([]));
+  const speed=25, detour = floodAvoid ? 1.35 : 1.15, miles = bestD*detour, eta=(miles/speed)*60;
   const name = best.properties?.name || (destMode==='fire' ? 'Fire Station' : 'Medical facility');
-  const why = floodAvoid ? (filtered>0 ? 'nearest outside flood' : 'nearest (no facilities in flood)') : 'nearest by distance';
-
-  rescueInfo.innerHTML = `<b>Rescue → ${esc(name)}</b><br>
-    Reason: ${why}<br>
-    Distance (proxy): ${miles.toFixed(2)} mi &nbsp;•&nbsp; ETA @ ${speed} mph: ${eta} min`;
+  const reason = floodAvoid ? (filtered>0 ? 'nearest outside flood' : 'nearest (no facilities in flood)') : 'nearest by distance';
+  rescueInfo.innerHTML = `<b>Rescue → ${esc(name)}</b><br>Reason: ${reason}<br>Distance (proxy): ${miles.toFixed(2)} mi • ETA @ ${speed} mph: ${Math.round(eta)} min`;
 }
 
-/* ---------- Detail panel helpers ---------- */
+/* ---- local Dijkstra on GRAPH (if graph.json present) ---- */
+function routeOnGraph(lnglat, facilityFC){
+  // snap rescue point to nearest node
+  const nodes = GRAPH.nodes, edges = GRAPH.edges;
+  const ids = Object.keys(nodes);
+  let sId=null, sD=Infinity;
+  for(const id of ids){
+    const d=turf.distance(turf.point(lnglat), turf.point(nodes[id]), {units:'miles'});
+    if(d<sD){sD=d; sId=id;}
+  }
+  if(!sId) return null;
+
+  // pick nearest facility node
+  let tId=null, tD=Infinity, name='Facility';
+  for(const f of facilityFC.features){
+    const p=f.geometry?.coordinates; if(!p) continue;
+    // snap facility to nearest node
+    let nId=null,nD=Infinity;
+    for(const id of ids){
+      const d=turf.distance(turf.point(p), turf.point(nodes[id]), {units:'miles'});
+      if(d<nD){nD=d; nId=id;}
+    }
+    if(nD<tD){ tD=nD; tId=nId; name=f.properties?.name||name; }
+  }
+  if(!tId) return null;
+
+  // build adjacency
+  const adj={}; for(const id of ids) adj[id]=[];
+  for(const e of edges){ // assume undirected; duplicate if needed
+    if(adj[e.u]) adj[e.u].push({v:e.v,w:+e.w});
+    if(adj[e.v]) adj[e.v].push({v:e.u,w:+e.w});
+  }
+
+  // Dijkstra
+  const dist={}, prev={}; ids.forEach(id=>dist[id]=Infinity); dist[sId]=0;
+  const Q=new Set(ids);
+  while(Q.size){
+    let u=null, best=Infinity; Q.forEach(id=>{ if(dist[id]<best){best=dist[id];u=id;} });
+    if(u===null) break; Q.delete(u);
+    if(u===tId) break;
+    for(const {v,w} of adj[u]){ const alt=dist[u]+w; if(alt<dist[v]){ dist[v]=alt; prev[v]=u; } }
+  }
+  if(dist[tId]===Infinity) return null;
+
+  // reconstruct & build line
+  const path=[tId]; let cur=tId; while(prev[cur]){ cur=prev[cur]; path.push(cur); }
+  path.reverse();
+  const coords=path.map(id=>nodes[id]);
+  const line=turf.lineString(coords);
+
+  let miles, eta;
+  if (GRAPH.units==='minutes'){
+    eta = dist[tId];
+    const mph = GRAPH.speed_mph_default || 25;
+    miles = (eta/60)*mph;
+  } else {
+    miles = dist[tId];
+    const mph = GRAPH.speed_mph_default || 25;
+    eta = (miles/mph)*60;
+  }
+  return {line, miles, eta, reason:'shortest on network (Dijkstra)', name};
+}
+
+/* ---------- Details & helpers ---------- */
 const tipEl=document.getElementById('tip'); const propsEl=document.getElementById('propTable');
 let showRaw=false, lastProps=null, lastPinned=false;
 
-const LABELS = {
-  id:'ID', name:'Name', ref:'Ref', functional_class:'Class',
-  [/* dynamic slot */ '']: ''
-};
-const FIX_LABELS = {
-  count:'Weight', weight:'Weight', edge_weight:'Weight', aadt:'AADT', traffic:'Traffic', volume:'Volume',
-  oneway:'Direction', one_way:'Direction', is_oneway:'Direction', lanes:'Lanes', maxspeed:'Max speed',
-  surface:'Surface', divided:'Divided', zipcode:'ZIP'
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+const FIX_LABELS={ id:'ID', name:'Name', ref:'Ref', functional_class:'Class',
+  oneway:'Direction', one_way:'Direction', is_oneway:'Direction', direction:'Direction',
+  lanes:'Lanes', maxspeed:'Max speed', surface:'Surface', divided:'Divided', zipcode:'ZIP'
 };
 function cleanProps(p){
-  const out={};
-  // curated + dynamic: show common and the detected weight field if present
-  if (p==null) return out;
-  const keys = new Set([
-    'id','name','ref','functional_class', weightField,
-    'oneway','one_way','is_oneway','lanes','maxspeed','surface','divided','zipcode'
-  ]);
-  for (const k of keys){
-    if(!k || !(k in p)) continue;
-    let label = FIX_LABELS[k] || k;
-    let v = p[k];
-    if (label==='Direction'){
-      const s = String(v).toLowerCase(); v = (s==='yes'||s==='true'||s==='1'||s==='y') ? 'One-way' : 'Two-way';
-    } else if (label==='Max speed' && v) {
-      v = `${v} mph`;
-    }
+  const out={}; if(!p) return out;
+  const keys=new Set(['id','name','ref',classField,weightField,'oneway','one_way','is_oneway','direction','lanes','maxspeed','surface','divided','zipcode']);
+  for(const k of keys){ if(!k||!(k in p)) continue;
+    let label=FIX_LABELS[k]||k, v=p[k];
+    if(label==='Direction'){ const s=String(v).toLowerCase(); v=(s==='yes'||s==='true'||s==='1'||s==='y'||s==='one-way')?'One-way':'Two-way'; }
+    if(label==='Max speed'&&v) v=`${v} mph`;
     out[label]=v;
   }
-  if (showRaw) out['__raw'] = p; // will be shown by renderTable
   return out;
 }
-function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function renderTable(obj){
-  if(showRaw){ return `<pre style="white-space:pre-wrap;margin:0">${esc(JSON.stringify(obj.__raw||obj,null,2))}</pre>`; }
-  const keys=Object.keys(obj).filter(k=>k!=='__raw'); if(!keys.length) return '(no selected fields)';
+  if(showRaw){ return `<pre style="white-space:pre-wrap;margin:0">${esc(JSON.stringify(obj,null,2))}</pre>`; }
+  const keys=Object.keys(obj); if(!keys.length) return '(no selected fields)';
   let h='<table>'; for(const k of keys){ h+=`<tr><td>${esc(k)}</td><td>${esc(obj[k])}</td></tr>` } return h+'</table>';
 }
-
 document.getElementById('toggleRaw').addEventListener('click', e=>{
-  e.preventDefault(); showRaw=!showRaw; if(lastProps) propsEl.innerHTML=renderTable(cleanProps(lastProps));
+  e.preventDefault(); showRaw=!showRaw; if(lastProps) propsEl.innerHTML=renderTable(showRaw?lastProps:cleanProps(lastProps));
 });
 
-/* ---------- Metric painting via feature-state (if metrics provided) ---------- */
-map.on('render', throttle(()=>{
-  if(!metrics || colorMode!=='metric') return;
-  const bbox=[[0,0],[map.getCanvas().width, map.getCanvas().height]];
-  const feats=map.queryRenderedFeatures(bbox,{layers:['edges-line']});
-  for(const f of feats){
-    const id=f.id ?? f.properties?.id; if(id==null) continue;
-    const m=metrics[String(id)]; if(!m) continue;
-    map.setFeatureState({source:'edges',sourceLayer:SOURCE_LAYER,id:f.id}, m);
-  }
-}, 400));
-
-function throttle(fn,wait){let t=0;return(...a)=>{const n=Date.now();if(n-t>wait){t=n;fn(...a);}}}
 function setActive(container, btn){ [...container.querySelectorAll('.btn')].forEach(b=>b.classList.toggle('active', b===btn)); }
 function bindToggle(id, fn){ const el=document.getElementById(id); el.addEventListener('click', ()=>{ el.classList.toggle('active'); fn(el.classList.contains('active')); }); }
 
