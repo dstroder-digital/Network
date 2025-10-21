@@ -4,11 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Edges (PMTiles)</title>
+
     <!-- MapLibre -->
     <link href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css" rel="stylesheet" />
     <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
 
-    <!-- PMTiles: defines global `window.pmtiles` (NO async/defer) -->
+    <!-- PMTiles (defines global window.pmtiles). No async/defer. -->
     <script src="https://unpkg.com/pmtiles@3.5.0/dist/pmtiles.js"></script>
 
     <style>
@@ -19,55 +20,67 @@
   <body>
     <div id="map"></div>
 
-    <!-- Your app (NO type="module", runs AFTER pmtiles.js) -->
+    <!-- Your app code MUST be inside this <script> and after pmtiles.js -->
     <script>
-      // quick sanity check in the console
-      console.log("window.pmtiles is", typeof window.pmtiles);
-
-      // If this logs "undefined", PMTiles didn't load. See notes below.
-      if (!window.pmtiles) {
-        alert("PMTiles script did not load. Check the Network tab for pmtiles.js");
-      }
-
       // Add PMTiles protocol
       const protocol = new pmtiles.Protocol();
       maplibregl.addProtocol("pmtiles", protocol.tile);
 
-      // Absolute URL to your hosted file on Pages
+      // Absolute URL to your PMTiles on Pages
       const EDGES_PMTILES = "https://dstroder-digital.github.io/Network/docs/data/app/edges.pmtiles";
+
+      // Basic map style (OSM raster + your vector layer)
+      const style = {
+        version: 8,
+        sources: {
+          osm: {
+            type: "raster",
+            tiles: ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"],
+            tileSize: 256,
+            attribution: "© OpenStreetMap contributors"
+          },
+          edges: {
+            type: "vector",
+            url: `pmtiles://${EDGES_PMTILES}`
+          }
+        },
+        layers: [
+          { id: "osm", type: "raster", source: "osm" },
+          {
+            id: "edges",
+            type: "line",
+            source: "edges",
+            "source-layer": "edges",   // must match your tippecanoe --layer name
+            paint: { "line-color": "#ff4d4d", "line-width": 2 }
+          }
+        ]
+      };
 
       const map = new maplibregl.Map({
         container: "map",
-        style: {
-          version: 8,
-          sources: {
-            osm: {
-              type: "raster",
-              tiles: ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"],
-              tileSize: 256,
-              attribution: "© OpenStreetMap contributors"
-            },
-            edges: {
-              type: "vector",
-              url: `pmtiles://${EDGES_PMTILES}`
-            }
-          },
-          layers: [
-            { id: "osm", type: "raster", source: "osm" },
-            {
-              id: "edges",
-              type: "line",
-              source: "edges",
-              "source-layer": "edges",     // must match the tippecanoe --layer name
-              paint: { "line-color": "#ff4d4d", "line-width": 2 }
-            }
-          ]
-        },
-        center: [-80.84, 35.23],
+        style,
+        center: [-80.84, 35.23],  // fallback center
         zoom: 9
       });
 
       map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+      // OPTIONAL: try to read center/bounds from the PMTiles header and fly there
+      (async () => {
+        try {
+          const p = new pmtiles.PMTiles(EDGES_PMTILES);
+          const header = await p.getHeader();
+          if (header?.center && Array.isArray(header.center) && header.center.length >= 2) {
+            const [lng, lat, z] = header.center;
+            map.once("load", () => map.easeTo({ center: [lng, lat], zoom: z ?? 10 }));
+          } else if (header?.bounds && Array.isArray(header.bounds) && header.bounds.length === 4) {
+            const b = header.bounds; // [w,s,e,n]
+            map.once("load", () => map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 40 }));
+          }
+        } catch (e) {
+          console.warn("Could not read PMTiles header/metadata:", e);
+        }
+      })();
     </script>
   </body>
 </html>
