@@ -11,23 +11,33 @@
 <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 
 <style>
-:root{--bg:#0b0b0b;--panel:#0009;--border:rgba(255,255,255,.12);--text:#eef5ff;--muted:#a8b3c7;
-      --blue:#29adff;--gold:#ffcc00;--poi:#f4a261;--med:#e76f51;--flood:#38bdf8;--future:#22d3ee}
+:root{
+  --bg:#0b0b0b; --panel:#0009; --border:rgba(255,255,255,.12); --text:#eef5ff; --muted:#a8b3c7;
+  --blue:#29adff; --fire:#ff8a00; --med:#e76f51; --flood:#38bdf8; --future:#22d3ee; --route1:#ffd34d; --route2:#9ae6b4;
+}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
 #map{position:absolute;inset:0}
-.hud{position:absolute;top:12px;left:12px;z-index:20;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
-.hud h3{margin:0 0 6px 0;font-size:15px} .hud small{color:var(--muted)}
-.panel{position:absolute;top:12px;right:12px;z-index:20;width:min(430px,36vw);max-height:calc(100% - 24px);overflow:auto;
-       background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
+
+.hud{
+  position:absolute;top:12px;left:12px;z-index:20;background:var(--panel);
+  border:1px solid var(--border);border-radius:10px;padding:10px 12px
+}
+.hud h3{margin:0 0 6px 0;font-size:15px}
+.hud small{color:var(--muted)}
+
+.panel{
+  position:absolute;top:12px;right:12px;z-index:20;width:min(430px,36vw);max-height:calc(100% - 24px);overflow:auto;
+  background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px
+}
 .row{display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:center}
 .btnbar{display:flex;flex-wrap:wrap;gap:6px}
 .btn{padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:#151515;color:var(--text);cursor:pointer;font-size:13px}
 .btn.active{background:#1d2a36;border-color:#2c3a4b;color:#bfe1ff}
-.btn:disabled{opacity:.45;cursor:not-allowed}
-.legend{display:flex;gap:10px;align-items:center;margin-top:6px}
+.legend{display:flex;gap:10px;align-items:center;margin-top:6px;flex-wrap:wrap}
 .sw{width:24px;height:8px;border-radius:5px;background:var(--blue)}
-.sw.gold{background:var(--gold)} .sw.poi{background:var(--poi)} .sw.med{background:var(--med)}
+.sw.fire{background:var(--fire)} .sw.med{background:var(--med)}
 .sw.flood{background:var(--flood)} .sw.future{background:var(--future)}
+.sw.r1{background:var(--route1)} .sw.r2{background:var(--route2)}
 .divider{height:1px;background:var(--border);margin:8px 0}
 .props{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
 .props table{width:100%;border-collapse:collapse}
@@ -42,6 +52,7 @@ a{color:#9ad0ff;text-decoration:none} a:hover{text-decoration:underline}
 .small{color:var(--muted);font-size:12px}
 .details{background:#0e111670;border:1px solid var(--border);border-radius:10px;padding:8px}
 summary{cursor:pointer}
+.badge{display:inline-block;padding:2px 8px;border:1px solid var(--border);border-radius:999px;background:#151515;margin-left:6px;font-size:12px;color:#cde7ff}
 </style>
 </head>
 <body>
@@ -49,53 +60,11 @@ summary{cursor:pointer}
 
 <div class="hud">
   <h3>Primal Network (PMTiles)</h3>
-  <small>Pan/zoom; drag + <kbd>Alt</kbd> to rotate. Hover = preview, click = pin / set rescue point.</small>
+  <small>Pan/zoom; drag + <kbd>Alt</kbd> to rotate. Hover = preview, click = set rescue point.</small>
 </div>
 
 <div class="panel">
   <div class="row">
-    <label>Basemap</label>
-    <div class="btnbar"><button class="btn active">Dark</button></div>
-  </div>
-
-  <div class="row">
-    <label>Edge color</label>
-    <div class="btnbar" id="colorBar">
-      <button class="btn active" data-color="solid">Solid</button>
-      <button class="btn" data-color="weight" id="byWeightBtn">By weight</button>
-      <button class="btn" data-color="class"  id="byClassBtn">By class</button>
-      <button class="btn" data-color="metric" id="metricBtn" style="display:none">By metric</button>
-    </div>
-  </div>
-  <div class="small" id="weightHint" style="margin:-6px 0 6px 0;"></div>
-  <div class="small" id="classHint"  style="margin:-6px 0 6px 0;"></div>
-
-  <div class="row" id="metricRow" style="display:none">
-    <label>Metric</label>
-    <select id="metricSelect">
-      <option value="betweenness">betweenness</option>
-      <option value="degree">degree</option>
-      <option value="closeness">closeness</option>
-      <option value="pagerank">pagerank</option>
-      <option value="community">community</option>
-    </select>
-  </div>
-  <div id="metricHint" class="small" style="display:none;margin-top:-6px;margin-bottom:6px;">
-    Metrics file not loaded. Add <code>docs/data/app/edge_metrics.json</code>.
-  </div>
-
-  <div class="btnbar" style="margin-top:6px">
-    <button class="btn" id="toggleWeighted">Weighted edges</button>
-    <button class="btn" id="toggleArrows">One-way arrows</button>
-    <button class="btn active" id="toggleNodes">Show nodes</button>
-  </div>
-
-  <div class="btnbar" style="margin-top:6px">
-    <button class="btn" id="toggleFire">Fire stations</button>
-    <button class="btn" id="toggleMedical">Medical facilities</button>
-  </div>
-
-  <div class="row" style="margin-top:6px">
     <label>Flood overlays</label>
     <div class="btnbar">
       <button class="btn" id="toggleNFHL">NFHL</button>
@@ -110,26 +79,28 @@ summary{cursor:pointer}
   <div class="divider"></div>
 
   <div class="details">
-    <b>Rescue planner</b> <span class="small">(click map to set rescue point)</span>
-    <div class="btnbar" style="margin-top:6px">
-      <button class="btn active" data-dest="fire" id="destFire">Send to Fire</button>
-      <button class="btn" data-dest="medical" id="destMed">Send to Medical</button>
-      <button class="btn" id="clearRescue">Clear</button>
-    </div>
-    <div id="rescueInfo" class="small" style="margin-top:6px"></div>
+    <b>Rescue planner</b>
+    <span class="small">Click map to set a rescue location. We’ll route to the most feasible <b>Fire</b> station, then to the most feasible <b>Medical</b> facility in one step.</span>
+    <div id="rescueInfo" class="small" style="margin-top:8px"></div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="small" id="metricStatus">Edge color:
+    <span class="badge" id="metricBadge">solid</span>
   </div>
 
   <div class="legend">
     <span class="sw"></span><small>Edges</small>
-    <span class="sw gold"></span><small>Weighted</small>
-    <span class="sw poi"></span><small>Fire</small>
-    <span class="sw med"></span><small>Medical</small>
+    <span class="sw r1"></span><small>Route: Rescue → Fire</small>
+    <span class="sw r2"></span><small>Route: Fire → Medical</small>
+    <span class="sw fire"></span><small>Fire stations</small>
+    <span class="sw med"></span><small>Medical facilities</small>
     <span class="sw flood"></span><small>NFHL</small>
     <span class="sw future"></span><small>Future flood</small>
   </div>
 
   <div class="divider"></div>
-
   <details>
     <summary>Fields (from tiles)</summary>
     <div id="fieldsList" class="small" style="margin-top:6px"></div>
@@ -150,8 +121,8 @@ const FIRE_URL    = 'https://dstroder-digital.github.io/Network/data/app/fire_st
 const MED_URL     = 'https://dstroder-digital.github.io/Network/data/app/medical_facilities.geojson';
 const NFHL_URL    = 'https://dstroder-digital.github.io/Network/data/app/nfhl_dissolved.geojson';
 const FUTURE_URL  = 'https://dstroder-digital.github.io/Network/data/app/future_flood_dissolved.geojson';
-const METRICS_URL = null;                 // e.g. './data/app/edge_metrics.json'
-const GRAPH_URL   = './data/app/graph.json'; // OPTIONAL: enables true street routing if present
+const METRICS_URL = null;                         // e.g. './data/app/edge_metrics.json'
+const GRAPH_URL   = './data/app/graph.json';      // OPTIONAL: enables true street routing if present
 
 /* ---------- PMTiles protocol (guard) ---------- */
 if (!window.__pmtilesProto) {
@@ -168,21 +139,29 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.NavigationControl({visualizePitch:true}), 'top-right');
 map.addControl(new maplibregl.ScaleControl({maxWidth:160, unit:'imperial'}));
 map.on('load',()=> {
+  // dark basemap (no UI, always on)
   map.addSource('dark',{type:'raster',tiles:['https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png'],tileSize:256,attribution:'© Stadia Maps, © OpenMapTiles, © OpenStreetMap'});
   map.addLayer({id:'dark',type:'raster',source:'dark'}, 'bg');
 });
 
-/* ---------- One-way arrow sprite ---------- */
-const arrowSvg='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="white" opacity="0.9"><path d="M13 5l7 7-7 7v-4H4v-6h9V5z"/></svg>`);
-map.on('load',()=>{ map.loadImage(arrowSvg,(e,img)=>{ if(!e) map.addImage('arrow', img,{pixelRatio:2}); }); });
+/* ---------- Sprites (arrows + icons) ---------- */
+// one-way arrow
+const arrowSvg='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="white"><path d="M13 5l7 7-7 7v-4H4v-6h9V5z"/></svg>`);
+map.on('load',()=>{ map.loadImage(arrowSvg,(e,img)=>{ if(!e) map.addImage('arrow',img,{pixelRatio:2}); }); });
+// fire truck (simple)
+const fireTruck='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><g fill="#ff8a00"><path d="M7 34h30l8-10h9v16H7z"/><circle cx="19" cy="44" r="6" fill="#fff"/><circle cx="45" cy="44" r="6" fill="#fff"/><circle cx="19" cy="44" r="3" fill="#111"/><circle cx="45" cy="44" r="3" fill="#111"/></g><rect x="40" y="24" width="6" height="6" fill="#fff"/></svg>`);
+map.on('load',()=>{ map.loadImage(fireTruck,(e,img)=>{ if(!e) map.addImage('firetruck',img,{pixelRatio:2}); }); });
+// medical (Rod of Asclepius style cross+snake)
+const medical='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="12" y="28" width="40" height="8" rx="2" fill="#e76f51"/><rect x="28" y="12" width="8" height="40" rx="2" fill="#e76f51"/><path d="M36 22c4 0 8 2 8 6s-4 6-8 6c-3 0-6 1-6 4 0 3 3 4 6 4" stroke="#fff" stroke-width="2" fill="none"/></svg>`);
+map.on('load',()=>{ map.loadImage(medical,(e,img)=>{ if(!e) map.addImage('medicon',img,{pixelRatio:2}); }); });
 
 /* ---------- Detect fields from metadata ---------- */
 let SOURCE_LAYER='edges';
 let weightField=null;
 let classField=null;
+
 const fieldsUI=document.getElementById('fieldsList');
-const weightHint=document.getElementById('weightHint');
-const classHint=document.getElementById('classHint');
+const metricBadge=document.getElementById('metricBadge');
 
 const tiles = new pmtiles.PMTiles(PMTILES_URL.replace('pmtiles://',''));
 tiles.getMetadata().then(meta=>{
@@ -193,57 +172,49 @@ tiles.getMetadata().then(meta=>{
   if (attrs.length){
     fieldsUI.innerHTML=attrs.map(a=>`• <code>${a.attribute}</code> <span class="small">(${a.type||'?'})</span>`).join('<br>');
   }
-
-  // pick weight field
+  // weight field (if any)
   const prefW=['count','weight','edge_weight','aadt','traffic','volume'];
   const nums=attrs.filter(a=>a.type==='number').map(a=>a.attribute);
   for (const k of prefW){ if(nums.includes(k)) { weightField=k; break; } }
   if (!weightField && nums.length) weightField=nums[0];
-  if (weightField){
-    weightHint.innerHTML=`Weight field: <b><code>${weightField}</code></b>.`;
-  } else {
-    weightHint.innerHTML=`No numeric field found → “By weight” & “Weighted edges” disabled.`;
-    document.getElementById('byWeightBtn').disabled=true;
-  }
 
-  // pick class field
+  // class field (if any)
   const prefC=['functional_class','road_class','class','cfcc','highway','rdclass'];
   const strs=attrs.filter(a=>a.type!=='number').map(a=>a.attribute);
   for (const k of prefC){ if(strs.includes(k)) { classField=k; break; } }
-  if (classField){
-    classHint.innerHTML=`Class field: <b><code>${classField}</code></b>.`;
-  } else {
-    classHint.innerHTML=`No class-like field found → “By class” disabled.`;
-    document.getElementById('byClassBtn').disabled=true;
-  }
 }).catch(()=>{});
 
 /* ---------- Build edges ---------- */
-let colorMode='solid', metrics=null, metricName='betweenness', metricDomain=[0,1];
+let metrics=null, metricName='betweenness', metricDomain=[0,1];
 
 map.on('load', async ()=>{
   map.addSource('edges',{type:'vector',url:PMTILES_URL});
+  // base edge layer
   map.addLayer({id:'edges-line',type:'line',source:'edges','source-layer':SOURCE_LAYER,
     layout:{'line-cap':'round','line-join':'round'},
-    paint:{ 'line-color':'#29adff','line-opacity':0.95,
+    paint:{
+      'line-color':'#29adff',
+      'line-opacity':0.95,
       'line-width':['interpolate',['linear'],['zoom'], 8,0.6, 12,1.3, 15,2.2]
     }
   });
 
-  // Weighted overlay
-  map.addLayer({id:'edges-weighted',type:'line',source:'edges','source-layer':SOURCE_LAYER,
-    layout:{'line-cap':'round','line-join':'round','visibility':'none'},
-    paint:{
-      'line-color':'#9bf6ff',
-      'line-opacity':0.95,
-      'line-width':['interpolate',['linear'],
-        ['coalesce',['to-number',['get',weightField||'__none__']],0], 0,0, 5,1.5, 20,3.5, 50,6, 150,9, 400,13]
-    }
-  });
+  // weighted overlay (always on if a weight exists; otherwise skipped)
+  if (weightField){
+    map.addLayer({id:'edges-weighted',type:'line',source:'edges','source-layer':SOURCE_LAYER,
+      layout:{'line-cap':'round','line-join':'round'},
+      paint:{
+        'line-color':'#9bf6ff',
+        'line-opacity':0.35,
+        'line-width':['interpolate',['linear'],
+          ['coalesce',['to-number',['get',weightField]],0], 0,0, 5,1.2, 20,3, 50,5, 150,8, 400,12]
+      }
+    });
+  }
 
-  // One-way arrows (includes 'direction' mapped values)
+  // one-way arrows (visible by default)
   map.addLayer({id:'oneway-arrows',type:'symbol',source:'edges','source-layer':SOURCE_LAYER,
-    layout:{'symbol-placement':'line','symbol-spacing':60,'icon-image':'arrow','icon-size':0.55,'visibility':'none'},
+    layout:{'symbol-placement':'line','symbol-spacing':60,'icon-image':'arrow','icon-size':0.55,'visibility':'visible'},
     filter:['any',
       ['==',['downcase',['get','oneway']],'yes'],
       ['==',['downcase',['get','one_way']],'yes'],
@@ -256,51 +227,50 @@ map.on('load', async ()=>{
   });
 
   await addOptionals();
-  await maybeLoadMetrics();
-  await maybeLoadGraph();
+  await maybeLoadMetrics();   // paint edges by metric if file exists
+  await maybeLoadGraph();     // enables real routing
   wireUI();
 });
 
-/* ---------- Optional layers ---------- */
+/* ---------- Optional layers (always visible for Fire/Medical) ---------- */
 let fireFC=null, medFC=null, nfhlFC=null, futureFC=null;
+
 async function addOptionals(){
-  // Nodes
+  // Nodes (kept subtle)
   try{
     const gj = await (await fetch(NODES_URL)).json();
     map.addSource('nodes',{type:'geojson',data:gj});
     map.addLayer({id:'nodes',type:'circle',source:'nodes',
       layout:{visibility:'visible'},
-      paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,1.2,12,2.2,15,3.2],
-             'circle-color':'#f4a261','circle-opacity':0.85,'circle-stroke-color':'#111','circle-stroke-width':0.5}});
-  }catch(_){ document.getElementById('toggleNodes').disabled=true; }
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,1.1,12,2.0,15,2.8],
+             'circle-color':'#f4a261','circle-opacity':0.35,'circle-stroke-color':'#111','circle-stroke-width':0.5}});
+  }catch(_){}
 
-  // Fire
+  // Fire (ALWAYS visible)
   try{
     fireFC = await (await fetch(FIRE_URL)).json();
     map.addSource('fire',{type:'geojson',data:fireFC});
-    map.addLayer({id:'fire',type:'circle',source:'fire',layout:{visibility:'none'},
-      paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,2.2,12,3.8,15,5.2],
-             'circle-color':'#f4a261','circle-stroke-color':'#111','circle-stroke-width':0.5}});
-  }catch(_){document.getElementById('toggleFire').disabled=true;}
+    map.addLayer({id:'fire',type:'symbol',source:'fire',layout:{
+        'icon-image':'firetruck','icon-size':['interpolate',['linear'],['zoom'],8,0.45,12,0.65,15,0.85],
+        'icon-allow-overlap':true, 'visibility':'visible'
+      }});
+  }catch(_){}
 
-  // Medical (filter out unnamed facilities)
+  // Medical (filter out unnamed; ALWAYS visible)
   try {
     const medAll = await (await fetch(MED_URL)).json();
     medFC = {
       type: "FeatureCollection",
-      features: (medAll.features || []).filter(
-        f => (f.properties?.name || "").trim().length > 0
-      )
+      features: (medAll.features || []).filter(f => (f.properties?.name || "").trim().length > 0)
     };
     map.addSource('med',{type:'geojson',data:medFC});
-    map.addLayer({id:'med',type:'circle',source:'med',layout:{visibility:'none'},
-      paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,2.2,12,3.8,15,5.2],
-             'circle-color':'#e76f51','circle-stroke-color':'#111','circle-stroke-width':0.5}});
-  } catch(_) {
-    document.getElementById('toggleMedical').disabled = true;
-  }
+    map.addLayer({id:'med',type:'symbol',source:'med',layout:{
+        'icon-image':'medicon','icon-size':['interpolate',['linear'],['zoom'],8,0.45,12,0.65,15,0.85],
+        'icon-allow-overlap':true, 'visibility':'visible'
+      }});
+  } catch(_){}
 
-  // Floods
+  // Flood overlays
   try{ nfhlFC = await (await fetch(NFHL_URL)).json();
        map.addSource('nfhl',{type:'geojson',data:nfhlFC});
        map.addLayer({id:'nfhl',type:'fill',source:'nfhl',layout:{visibility:'none'},
@@ -310,34 +280,52 @@ async function addOptionals(){
        map.addLayer({id:'future',type:'fill',source:'future',layout:{visibility:'none'},
          paint:{'fill-color':'#22d3ee','fill-opacity':0.35,'fill-outline-color':'#06b6d4'}});}catch(_){}
 
-  // Rescue graphics
+  // Rescue point + routes
   map.addSource('rescue_pt',{type:'geojson',data:turf.featureCollection([])});
   map.addLayer({id:'rescue_pt',type:'circle',source:'rescue_pt',
     paint:{'circle-radius':6,'circle-color':'#fff','circle-stroke-color':'#111','circle-stroke-width':1}});
 
+  map.addSource('route_fire',{type:'geojson',data:turf.featureCollection([])});
+  map.addLayer({id:'route_fire',type:'line',source:'route_fire',paint:{'line-color':'var(--route1)','line-width':4}});
+
+  map.addSource('route_med',{type:'geojson',data:turf.featureCollection([])});
+  map.addLayer({id:'route_med',type:'line',source:'route_med',paint:{'line-color':'var(--route2)','line-width':4}});
+
+  // Fallback straight connector (used only if no graph)
   map.addSource('rescue_conn',{type:'geojson',data:turf.featureCollection([])});
-  map.addLayer({id:'rescue_conn',type:'line',source:'rescue_conn',
-    paint:{'line-color':'#22c55e','line-width':3,'line-dasharray':[2,2]}});
+  map.addLayer({id:'rescue_conn',type:'line',source:'rescue_conn',paint:{'line-color':'#22c55e','line-width':3,'line-dasharray':[2,2]}});
 }
 
 /* ---------- Metrics (optional) ---------- */
 async function maybeLoadMetrics(){
-  const hint=document.getElementById('metricHint');
-  if (!METRICS_URL){ hint.style.display=''; return; }
+  if (!METRICS_URL){ metricBadge.textContent='solid'; return; }
   try{
     const j = await (await fetch(METRICS_URL,{mode:'cors'})).json();
     metrics = Array.isArray(j) ? Object.fromEntries(j.map(o=>[String(o.id),o])) : j;
-    document.getElementById('metricBtn').style.display='';
-    document.getElementById('metricRow').style.display='';
-    hint.style.display='none';
     setMetricDomain();
-  }catch(_){ hint.style.display=''; }
+    // paint base edges by metric
+    metricBadge.textContent = `metric: ${metricName}`;
+    map.setPaintProperty('edges-line','line-color',
+      ['interpolate',['linear'],['coalesce',['feature-state',metricName],['to-number',['get',metricName]],0],
+        metricDomain[0],'#264653',(metricDomain[0]+metricDomain[1])/2,'#2a9d8f',metricDomain[1],'#e9c46a']);
+  }catch(_){ metricBadge.textContent='solid'; }
 }
 function setMetricDomain(){
   const vals=[]; for(const k in metrics){ const v=+metrics[k]?.[metricName]; if(Number.isFinite(v)) vals.push(v); }
   if(!vals.length) return; vals.sort((a,b)=>a-b);
   metricDomain=[vals[Math.floor(vals.length*0.02)], vals[Math.floor(vals.length*0.98)]];
 }
+// keep painting metric values with feature-state when visible
+map.on('render', throttle(()=>{
+  if(!metrics) return;
+  const bbox=[[0,0],[map.getCanvas().width, map.getCanvas().height]];
+  const feats=map.queryRenderedFeatures(bbox,{layers:['edges-line']});
+  for(const f of feats){
+    const id=f.id ?? f.properties?.id; if(id==null) continue;
+    const m=metrics[String(id)]; if(!m) continue;
+    map.setFeatureState({source:'edges',sourceLayer:SOURCE_LAYER,id:f.id}, m);
+  }
+}, 400));
 
 /* ---------- Graph routing (optional) ---------- */
 let GRAPH=null; // {nodes:{id:[lng,lat]}, edges:[{u,v,w}], units:'miles'|'minutes', speed_mph_default?:num}
@@ -346,179 +334,150 @@ async function maybeLoadGraph(){
     const resp = await fetch(GRAPH_URL, {mode:'cors'});
     if(!resp.ok) return;
     GRAPH = await resp.json();
-    // Add a line style for true route
-    map.addSource('route_true',{type:'geojson',data:turf.featureCollection([])});
-    map.addLayer({id:'route_true',type:'line',source:'route_true',
-      paint:{'line-color':'#ffd34d','line-width':4}});
   }catch(_){}
 }
 
-/* ---------- UI wiring ---------- */
+/* ---------- UI wiring (flood + clicks + details) ---------- */
 function wireUI(){
-  const colorBar=document.getElementById('colorBar');
-  colorBar.addEventListener('click', e=>{
-    const b=e.target.closest('.btn'); if(!b) return;
-    const mode=b.dataset.color;
-    if (mode==='weight' && !weightField) return;
-    if (mode==='class'  && !classField)  return;
-    if (mode==='metric' && !metrics){ alert('Metrics file not loaded.'); return; }
-    colorMode=mode; setActive(colorBar,b);
-
-    if(colorMode==='solid'){
-      map.setPaintProperty('edges-line','line-color','#29adff');
-    }else if(colorMode==='class'){
-      map.setPaintProperty('edges-line','line-color',
-        ['match',['downcase',['coalesce',['get',classField],'' ]],
-          'motorway','#ff7a00','trunk','#ffcc00','primary','#ffd34d','secondary','#66d17a',
-          'tertiary','#8bd7a2','residential','#29adff','service','#b1b8c7','#29adff'
-        ]);
-    }else if(colorMode==='weight'){
-      map.setPaintProperty('edges-line','line-color',
-        ['interpolate',['linear'],['coalesce',['to-number',['get',weightField]],0],
-          0,'#24496b', 5,'#2f6f9b', 20,'#3e8ec3', 50,'#55b0ec', 150,'#9ad0ff', 400,'#cfe6ff'
-        ]);
-    }else if(colorMode==='metric'){
-      map.setPaintProperty('edges-line','line-color',
-        ['interpolate',['linear'],['coalesce',['feature-state',metricName],['to-number',['get',metricName]],0],
-          metricDomain[0],'#264653',(metricDomain[0]+metricDomain[1])/2,'#2a9d8f',metricDomain[1],'#e9c46a']);
-    }
+  document.getElementById('toggleNFHL').addEventListener('click', e=>{
+    e.currentTarget.classList.toggle('active');
+    map.setLayoutProperty('nfhl','visibility', e.currentTarget.classList.contains('active')?'visible':'none');
   });
-
-  document.getElementById('metricSelect').addEventListener('change', e=>{
-    metricName=e.target.value; setMetricDomain();
-    if(colorMode==='metric' && metrics){
-      map.setPaintProperty('edges-line','line-color',
-        ['interpolate',['linear'],['coalesce',['feature-state',metricName],['to-number',['get',metricName]],0],
-          metricDomain[0],'#264653',(metricDomain[0]+metricDomain[1])/2,'#2a9d8f',metricDomain[1],'#e9c46a']);
-    }
+  document.getElementById('toggleFuture').addEventListener('click', e=>{
+    e.currentTarget.classList.toggle('active');
+    map.setLayoutProperty('future','visibility', e.currentTarget.classList.contains('active')?'visible':'none');
   });
-
-  bindToggle('toggleWeighted', v=> map.setLayoutProperty('edges-weighted','visibility', (v && weightField)?'visible':'none'));
-  bindToggle('toggleArrows',   v=> map.setLayoutProperty('oneway-arrows','visibility', v?'visible':'none'));
-  bindToggle('toggleNodes',    v=> map.setLayoutProperty('nodes','visibility', v?'visible':'none'));
-  bindToggle('toggleFire',     v=> map.setLayoutProperty('fire','visibility', v?'visible':'none'));
-  bindToggle('toggleMedical',  v=> map.setLayoutProperty('med','visibility', v?'visible':'none'));
-  bindToggle('toggleNFHL',     v=> map.setLayoutProperty('nfhl','visibility', v?'visible':'none'));
-  bindToggle('toggleFuture',   v=> map.setLayoutProperty('future','visibility', v?'visible':'none'));
-
   document.getElementById('floodOpacity').addEventListener('input', e=>{
     const v=+e.target.value; if(map.getLayer('nfhl')) map.setPaintProperty('nfhl','fill-opacity', v);
     if(map.getLayer('future')) map.setPaintProperty('future','fill-opacity', v);
   });
 
-  document.getElementById('destFire').addEventListener('click', e=>{ setActive(e.currentTarget.parentElement, e.currentTarget); destMode='fire'; recomputeRescue(); });
-  document.getElementById('destMed').addEventListener('click', e=>{ setActive(e.currentTarget.parentElement, e.currentTarget); destMode='medical'; recomputeRescue(); });
-  document.getElementById('clearRescue').addEventListener('click', clearRescue);
-
-  document.getElementById('toggleRaw').addEventListener('click', e=>{
-    e.preventDefault(); showRaw=!showRaw; if(lastProps) propsEl.innerHTML=renderTable(showRaw?lastProps:cleanProps(lastProps));
-  });
-
-  // Click map: pin edge if hit; otherwise set rescue point
+  // click behavior
   map.on('click', (e)=>{
-    const feats = map.queryRenderedFeatures(e.point,{layers:['edges-line','edges-weighted']});
+    const feats = map.queryRenderedFeatures(e.point,{layers:['edges-line']});
     if (feats.length){ lastProps=feats[0].properties||{}; lastPinned=true; propsEl.innerHTML=renderTable(cleanProps(lastProps)); return; }
+    // set rescue location + plan both routes
     setRescuePoint([e.lngLat.lng,e.lngLat.lat]);
+    planRescuePipeline();
   });
 
-  // Hover tip
+  // hover tip
   map.on('mousemove', e=>{
-    const f=map.queryRenderedFeatures(e.point,{layers:['edges-line','edges-weighted']})[0];
+    const f=map.queryRenderedFeatures(e.point,{layers:['edges-line']})[0];
     if(!f){ if(!lastPinned) tipEl.classList.add('hidden'); return; }
     const nm=f.properties?.name||f.properties?.ref||'Edge';
-    const w = weightField? +f.properties?.[weightField] : null;
-    tipEl.innerHTML=`<strong>${esc(nm)}</strong>${Number.isFinite(w)?` — ${weightField}: ${w}`:''}`;
+    tipEl.innerHTML=`<strong>${esc(nm)}</strong>`;
     tipEl.style.left=e.originalEvent.clientX+'px'; tipEl.style.top=e.originalEvent.clientY+'px';
     tipEl.classList.remove('hidden');
   });
 }
 
-/* ---------- Rescue planning ---------- */
-let rescuePt=null, destMode='fire';
+/* ---------- Rescue pipeline ---------- */
+let rescuePt=null;
 const rescueInfo=document.getElementById('rescueInfo');
 
 function setRescuePoint(lnglat){
   rescuePt=lnglat;
   map.getSource('rescue_pt').setData(turf.featureCollection([turf.point(lnglat)]));
-  recomputeRescue();
-}
-function clearRescue(){
-  rescuePt=null;
-  map.getSource('rescue_pt').setData(turf.featureCollection([]));
-  map.getSource('rescue_conn').setData(turf.featureCollection([]));
-  if(map.getSource('route_true')) map.getSource('route_true').setData(turf.featureCollection([]));
-  rescueInfo.textContent='';
 }
 
-function recomputeRescue(){
-  if(!rescuePt){ rescueInfo.textContent='(click map to set a rescue point)'; return; }
-  const fc = destMode==='fire' ? fireFC : medFC;
-  if(!fc || !fc.features){ rescueInfo.textContent='Destination dataset not loaded.'; return; }
+function planRescuePipeline(){
+  if(!rescuePt){ rescueInfo.textContent='Click map to set a rescue point.'; return; }
+  if(!fireFC || !fireFC.features?.length){ rescueInfo.textContent='Fire stations dataset not loaded.'; return; }
+  if(!medFC  || !medFC.features?.length){ rescueInfo.textContent='Medical facilities dataset not loaded.'; return; }
 
-  // If we have a graph, do true routing to nearest facility (by graph)
+  // Determine flood-avoidance if overlays visible
+  const avoidFlood = (map.getLayoutProperty('nfhl','visibility')==='visible' || map.getLayoutProperty('future','visibility')==='visible');
+  const floodPolys=[]; if(avoidFlood){ if(nfhlFC?.features) floodPolys.push(...nfhlFC.features); if(futureFC?.features) floodPolys.push(...futureFC.features); }
+
+  // STEP 1: rescue -> fire (prefer nearest outside flood if overlays visible)
+  const fireChoice = pickFacility(rescuePt, fireFC, floodPolys);
+  // STEP 2: fire -> medical (start from chosen fire)
+  const fireCoord = fireChoice?.feature?.geometry?.coordinates;
+  const medChoice  = fireCoord ? pickFacility(fireCoord, medFC, floodPolys) : null;
+
+  // Draw + narrate
+  let info = '';
   if (GRAPH){
-    const out = routeOnGraph(rescuePt, fc);
-    if (!out){ rescueInfo.textContent='No route found in graph.'; return; }
-    const {line, miles, eta, reason, name} = out;
-    map.getSource('route_true').setData(turf.featureCollection([line]));
-    map.getSource('rescue_conn').setData(turf.featureCollection([])); // hide straight connector
-    rescueInfo.innerHTML = `<b>Rescue → ${esc(name)}</b><br>Reason: ${reason}<br>Distance: ${miles.toFixed(2)} mi • ETA: ${Math.round(eta)} min`;
-    return;
-  }
+    // graph routing both legs
+    const A = routeOnGraph(rescuePt, fireChoice.feature);
+    const B = fireCoord && medChoice?.feature ? routeOnGraph(fireCoord, medChoice.feature) : null;
 
-  // Fallback: nearest by distance (straight line), avoiding flooded facilities when visible
-  const floodAvoid = (map.getLayoutProperty('nfhl','visibility')==='visible' || map.getLayoutProperty('future','visibility')==='visible');
-  const polys=[]; if(floodAvoid){ if(nfhlFC?.features) polys.push(...nfhlFC.features); if(futureFC?.features) polys.push(...futureFC.features); }
-  let best=null,bestD=Infinity,filtered=0; const p0=turf.point(rescuePt);
+    if (A){
+      map.getSource('route_fire').setData(turf.featureCollection([A.line]));
+      info += `<b>Rescue → Fire:</b> ${esc(A.name)} — ${A.miles.toFixed(2)} mi, ${Math.round(A.eta)} min (reason: ${A.reason}).<br>`;
+    } else {
+      map.getSource('route_fire').setData(turf.featureCollection([]));
+      info += `<b>Rescue → Fire:</b> no route found.<br>`;
+    }
+    if (B){
+      map.getSource('route_med').setData(turf.featureCollection([B.line]));
+      info += `<b>Fire → Medical:</b> ${esc(B.name)} — ${B.miles.toFixed(2)} mi, ${Math.round(B.eta)} min (reason: ${B.reason}).`;
+    } else {
+      map.getSource('route_med').setData(turf.featureCollection([]));
+      info += `<b>Fire → Medical:</b> ${medChoice?esc(medChoice.feature.properties?.name||'facility'):'n/a'} (no route found).`;
+    }
+    // hide fallback connector
+    map.getSource('rescue_conn').setData(turf.featureCollection([]));
+  } else {
+    // fallback straight segments
+    const seg1 = fireChoice?.feature ? turf.lineString([rescuePt, fireChoice.feature.geometry.coordinates]) : null;
+    const seg2 = (fireCoord && medChoice?.feature) ? turf.lineString([fireCoord, medChoice.feature.geometry.coordinates]) : null;
+    map.getSource('route_fire').setData(turf.featureCollection([]));
+    map.getSource('route_med').setData(turf.featureCollection([]));
+    map.getSource('rescue_conn').setData(turf.featureCollection([].concat(seg1?[seg1]:[], seg2?[seg2]:[])));
+    info += `<b>Note:</b> routing graph not loaded — showing straight connections with proxy distances.<br>`;
+    if (fireChoice){
+      info += `<b>Rescue → Fire:</b> ${esc(fireChoice.feature.properties?.name||'Fire Station')} — ${fireChoice.explain}.<br>`;
+    }
+    if (medChoice){
+      info += `<b>Fire → Medical:</b> ${esc(medChoice.feature.properties?.name||'Medical facility')} — ${medChoice.explain}.`;
+    }
+  }
+  rescueInfo.innerHTML = info;
+}
+
+function pickFacility(originLngLat, fc, floodPolys){
+  let best=null, bestD=Infinity, filtered=0; const p0=turf.point(originLngLat);
+  const avoid = floodPolys && floodPolys.length>0;
   for(const f of fc.features){
     const p=f.geometry?.coordinates; if(!p) continue;
-    if (polys.length && polys.some(poly=>turf.booleanPointInPolygon(turf.point(p), poly))){ filtered++; continue; }
-    const d=turf.distance(p0, turf.point(p), {units:'miles'}); if(d<bestD){best=f;bestD=d;}
+    if (avoid && floodPolys.some(poly=>turf.booleanPointInPolygon(turf.point(p), poly))){ filtered++; continue; }
+    const d=turf.distance(p0, turf.point(p), {units:'miles'});
+    if(d<bestD){best=f;bestD=d;}
   }
-  if(!best){ for(const f of fc.features){ const p=f.geometry?.coordinates; if(!p) continue; const d=turf.distance(p0, turf.point(p), {units:'miles'}); if(d<bestD){best=f;bestD=d;} } }
-  if(!best){ rescueInfo.textContent='No nearby facility found.'; return; }
-  const line=turf.lineString([rescuePt, best.geometry.coordinates]); map.getSource('rescue_conn').setData(turf.featureCollection([line]));
-  if(map.getSource('route_true')) map.getSource('route_true').setData(turf.featureCollection([]));
-  const speed=25, detour = floodAvoid ? 1.35 : 1.15, miles = bestD*detour, eta=(miles/speed)*60;
-  const name = best.properties?.name || (destMode==='fire' ? 'Fire Station' : 'Medical facility');
-  const reason = floodAvoid ? (filtered>0 ? 'nearest outside flood' : 'nearest (no facilities in flood)') : 'nearest by distance';
-  rescueInfo.innerHTML = `<b>Rescue → ${esc(name)}</b><br>Reason: ${reason}<br>Distance (proxy): ${miles.toFixed(2)} mi • ETA @ ${speed} mph: ${Math.round(eta)} min`;
+  // fallback if all filtered
+  if(!best){
+    for(const f of fc.features){
+      const p=f.geometry?.coordinates; if(!p) continue;
+      const d=turf.distance(p0, turf.point(p), {units:'miles'});
+      if(d<bestD){best=f;bestD=d;}
+    }
+  }
+  return {
+    feature: best,
+    explain: avoid ? (filtered>0 ? 'nearest outside flood polygons' : 'nearest (no facilities in flood)') : 'nearest by distance'
+  };
 }
 
-/* ---- local Dijkstra on GRAPH (if graph.json present) ---- */
-function routeOnGraph(lnglat, facilityFC){
-  // snap rescue point to nearest node
-  const nodes = GRAPH.nodes, edges = GRAPH.edges;
-  const ids = Object.keys(nodes);
-  let sId=null, sD=Infinity;
-  for(const id of ids){
-    const d=turf.distance(turf.point(lnglat), turf.point(nodes[id]), {units:'miles'});
-    if(d<sD){sD=d; sId=id;}
+/* ---- local Dijkstra on GRAPH ---- */
+function routeOnGraph(startLngLat, facilityFeature){
+  if(!GRAPH || !facilityFeature) return null;
+  const nodes=GRAPH.nodes, edges=GRAPH.edges, ids=Object.keys(nodes);
+  // snap point to nearest node
+  function snap(pt){
+    let id=null, d0=Infinity; for(const k of ids){ const d=turf.distance(turf.point(pt), turf.point(nodes[k]), {units:'miles'}); if(d<d0){d0=d; id=k;} }
+    return id;
   }
-  if(!sId) return null;
+  const sId=snap(startLngLat);
+  const tId=snap(facilityFeature.geometry.coordinates);
+  if(!sId||!tId) return null;
 
-  // pick nearest facility node
-  let tId=null, tD=Infinity, name='Facility';
-  for(const f of facilityFC.features){
-    const p=f.geometry?.coordinates; if(!p) continue;
-    // snap facility to nearest node
-    let nId=null,nD=Infinity;
-    for(const id of ids){
-      const d=turf.distance(turf.point(p), turf.point(nodes[id]), {units:'miles'});
-      if(d<nD){nD=d; nId=id;}
-    }
-    if(nD<tD){ tD=nD; tId=nId; name=f.properties?.name||name; }
-  }
-  if(!tId) return null;
-
-  // build adjacency
+  // adjacency (undirected unless encoded otherwise)
   const adj={}; for(const id of ids) adj[id]=[];
-  for(const e of edges){ // assume undirected; duplicate if needed
-    if(adj[e.u]) adj[e.u].push({v:e.v,w:+e.w});
-    if(adj[e.v]) adj[e.v].push({v:e.u,w:+e.w});
-  }
+  for(const e of edges){ if(adj[e.u]) adj[e.u].push({v:e.v,w:+e.w}); if(adj[e.v]) adj[e.v].push({v:e.u,w:+e.w}); }
 
-  // Dijkstra
+  // dijkstra
   const dist={}, prev={}; ids.forEach(id=>dist[id]=Infinity); dist[sId]=0;
   const Q=new Set(ids);
   while(Q.size){
@@ -529,37 +488,33 @@ function routeOnGraph(lnglat, facilityFC){
   }
   if(dist[tId]===Infinity) return null;
 
-  // reconstruct & build line
-  const path=[tId]; let cur=tId; while(prev[cur]){ cur=prev[cur]; path.push(cur); }
-  path.reverse();
+  // path
+  const path=[tId]; let cur=tId; while(prev[cur]){ cur=prev[cur]; path.push(cur); } path.reverse();
   const coords=path.map(id=>nodes[id]);
   const line=turf.lineString(coords);
 
   let miles, eta;
-  if (GRAPH.units==='minutes'){
-    eta = dist[tId];
-    const mph = GRAPH.speed_mph_default || 25;
-    miles = (eta/60)*mph;
-  } else {
-    miles = dist[tId];
-    const mph = GRAPH.speed_mph_default || 25;
-    eta = (miles/mph)*60;
-  }
+  if (GRAPH.units==='minutes'){ eta = dist[tId]; const mph = GRAPH.speed_mph_default || 25; miles = (eta/60)*mph; }
+  else { miles = dist[tId]; const mph = GRAPH.speed_mph_default || 25; eta = (miles/mph)*60; }
+
+  const name = facilityFeature.properties?.name || 'Facility';
   return {line, miles, eta, reason:'shortest on network (Dijkstra)', name};
 }
 
 /* ---------- Details & helpers ---------- */
 const tipEl=document.getElementById('tip'); const propsEl=document.getElementById('propTable');
 let showRaw=false, lastProps=null, lastPinned=false;
+document.getElementById('toggleRaw').addEventListener('click', e=>{
+  e.preventDefault(); showRaw=!showRaw; if(lastProps) propsEl.innerHTML=renderTable(showRaw?lastProps:cleanProps(lastProps));
+});
 
-function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 const FIX_LABELS={ id:'ID', name:'Name', ref:'Ref', functional_class:'Class',
   oneway:'Direction', one_way:'Direction', is_oneway:'Direction', direction:'Direction',
   lanes:'Lanes', maxspeed:'Max speed', surface:'Surface', divided:'Divided', zipcode:'ZIP'
 };
 function cleanProps(p){
   const out={}; if(!p) return out;
-  const keys=new Set(['id','name','ref',classField,weightField,'oneway','one_way','is_oneway','direction','lanes','maxspeed','surface','divided','zipcode']);
+  const keys=new Set(['id','name','ref','functional_class','oneway','one_way','is_oneway','direction','lanes','maxspeed','surface','divided','zipcode']);
   for(const k of keys){ if(!k||!(k in p)) continue;
     let label=FIX_LABELS[k]||k, v=p[k];
     if(label==='Direction'){ const s=String(v).toLowerCase(); v=(s==='yes'||s==='true'||s==='1'||s==='y'||s==='one-way')?'One-way':'Two-way'; }
@@ -573,12 +528,8 @@ function renderTable(obj){
   const keys=Object.keys(obj); if(!keys.length) return '(no selected fields)';
   let h='<table>'; for(const k of keys){ h+=`<tr><td>${esc(k)}</td><td>${esc(obj[k])}</td></tr>` } return h+'</table>';
 }
-document.getElementById('toggleRaw').addEventListener('click', e=>{
-  e.preventDefault(); showRaw=!showRaw; if(lastProps) propsEl.innerHTML=renderTable(showRaw?lastProps:cleanProps(lastProps));
-});
-
-function setActive(container, btn){ [...container.querySelectorAll('.btn')].forEach(b=>b.classList.toggle('active', b===btn)); }
-function bindToggle(id, fn){ const el=document.getElementById(id); el.addEventListener('click', ()=>{ el.classList.toggle('active'); fn(el.classList.contains('active')); }); }
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function throttle(fn,wait){let t=0;return(...a)=>{const n=Date.now();if(n-t>wait){t=n;fn(...a);}}}
 
 map.on('error', e=>console.error('Map error:', e?.error||e));
 })();
