@@ -10,27 +10,31 @@
 <script src="https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js"></script>
 
 <style>
-:root{--bg:#0b0b0b;--panel:#0009;--border:rgba(255,255,255,.12);--text:#eef5ff;--muted:#a8b3c7;--blue:#29adff;--gold:#ffcc00;--poi:#f4a261;--med:#e76f51}
+:root{--bg:#0b0b0b;--panel:#0009;--border:rgba(255,255,255,.12);--text:#eef5ff;--muted:#a8b3c7;
+      --blue:#29adff;--gold:#ffcc00;--poi:#f4a261;--med:#e76f51;--flood:#38bdf8;--future:#22d3ee}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
 #map{position:absolute;inset:0}
 .hud{position:absolute;top:12px;left:12px;z-index:20;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
 .hud h3{margin:0 0 6px 0;font-size:15px} .hud small{color:var(--muted)}
-.panel{position:absolute;top:12px;right:12px;z-index:20;width:min(380px,34vw);max-height:calc(100% - 24px);overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
+.panel{position:absolute;top:12px;right:12px;z-index:20;width:min(390px,34vw);max-height:calc(100% - 24px);overflow:auto;
+       background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
 .row{display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:center}
 .btnbar{display:flex;flex-wrap:wrap;gap:6px}
 .btn{padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:#151515;color:var(--text);cursor:pointer;font-size:13px}
 .btn.active{background:#1d2a36;border-color:#2c3a4b;color:#bfe1ff}
-.switch{display:flex;align-items:center;gap:8px}
-label small{color:var(--muted)}
 .legend{display:flex;gap:10px;align-items:center;margin-top:6px}
 .sw{width:24px;height:8px;border-radius:5px;background:var(--blue)}
-.sw.gold{background:var(--gold)} .sw.poi{background:var(--poi)} .sw.med{background:var(--med)} .sw.flood{background:#7dd3fc}
+.sw.gold{background:var(--gold)} .sw.poi{background:var(--poi)} .sw.med{background:var(--med)}
+.sw.flood{background:var(--flood)} .sw.future{background:var(--future)}
 .divider{height:1px;background:var(--border);margin:8px 0}
 .props{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
 .props table{width:100%;border-collapse:collapse}
 .props td{padding:4px 0;border-bottom:1px dashed var(--border);vertical-align:top}
 .props td:first-child{color:var(--muted);padding-right:8px;width:42%}
-.tip{position:absolute;pointer-events:none;z-index:30;transform:translate(-50%,-120%);background:#0e1116;color:#fff;padding:6px 8px;border:1px solid var(--border);border-radius:8px;white-space:nowrap;font-size:12.5px;box-shadow:0 10px 30px #0006}
+a{color:#9ad0ff;text-decoration:none} a:hover{text-decoration:underline}
+.tip{position:absolute;pointer-events:none;z-index:30;transform:translate(-50%,-120%);
+     background:#0e1116;color:#fff;padding:6px 8px;border:1px solid var(--border);border-radius:8px;white-space:nowrap;
+     font-size:12.5px;box-shadow:0 10px 30px #0006}
 .hidden{display:none}
 .range{width:100%}
 </style>
@@ -86,7 +90,7 @@ label small{color:var(--muted)}
 
   <div class="btnbar" style="margin-top:6px">
     <button class="btn" id="toggleWeighted">Weighted edges</button>
-    <button class="btn" id="toggleArrows">Show one-way arrows</button>
+    <button class="btn" id="toggleArrows">One-way arrows</button>
     <button class="btn" id="toggleNodes">Show nodes</button>
   </div>
 
@@ -117,7 +121,8 @@ label small{color:var(--muted)}
     <span class="sw gold"></span><small>Weighted</small>
     <span class="sw poi"></span><small>Fire</small>
     <span class="sw med"></span><small>Medical</small>
-    <span class="sw flood"></span><small>Flood areas</small>
+    <span class="sw flood"></span><small>NFHL</small>
+    <span class="sw future"></span><small>Future flood</small>
   </div>
 
   <div class="divider"></div>
@@ -128,17 +133,17 @@ label small{color:var(--muted)}
 
 <script>
 (() => {
-/* ---------- URLs (swap if needed) ---------- */
+/* ---------- URLs (edit to your paths) ---------- */
 const PMTILES_URL = 'pmtiles://https://media.githubusercontent.com/media/dstroder-digital/Network/main/docs/data/app/edges.pmtiles';
-const NODES_URL = 'https://dstroder-digital.github.io/Network/data/app/nodes.geojson';
-const FIRE_URL  = 'https://dstroder-digital.github.io/Network/data/app/fire_stations.geojson';
-const MED_URL   = 'https://dstroder-digital.github.io/Network/data/app/medical_facilities.geojson';
-const NFHL_URL  = 'https://dstroder-digital.github.io/Network/data/app/nfhl_dissolved.geojson';
-const FUTURE_URL= 'https://dstroder-digital.github.io/Network/data/app/future_flood_dissolved.geojson';
-const ROUTE_BASE= 'https://dstroder-digital.github.io/Network/data/app/route_example_baseline.geojson';
-const ROUTE_FLOOD='https://dstroder-digital.github.io/Network/data/app/route_example_flooded.geojson';
-const ROUTE_STATS='https://dstroder-digital.github.io/Network/data/app/route_example_stats.json';
-const METRICS_URL=null; // set to JSON if you generate metrics (see format below)
+const NODES_URL   = 'https://dstroder-digital.github.io/Network/data/app/nodes.geojson';
+const FIRE_URL    = 'https://dstroder-digital.github.io/Network/data/app/fire_stations.geojson';
+const MED_URL     = 'https://dstroder-digital.github.io/Network/data/app/medical_facilities.geojson';
+const NFHL_URL    = 'https://dstroder-digital.github.io/Network/data/app/nfhl_dissolved.geojson';
+const FUTURE_URL  = 'https://dstroder-digital.github.io/Network/data/app/future_flood_dissolved.geojson';
+const ROUTE_BASE  = 'https://dstroder-digital.github.io/Network/data/app/route_example_baseline.geojson';
+const ROUTE_FLOOD = 'https://dstroder-digital.github.io/Network/data/app/route_example_flooded.geojson';
+const ROUTE_STATS = 'https://dstroder-digital.github.io/Network/data/app/route_example_stats.json';
+const METRICS_URL = null; // e.g. './data/app/edge_metrics.json' (see format in comments)
 
 /* ---------- PMTiles protocol (guard) ---------- */
 if (!window.__pmtilesProto) {
@@ -155,11 +160,11 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.NavigationControl({visualizePitch:true}), 'top-right');
 map.addControl(new maplibregl.ScaleControl({maxWidth:160, unit:'imperial'}));
 
-/* ---------- one-way arrow image ---------- */
-const arrowSvg = 'data:image/svg+xml;base64,' + btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="white" opacity="0.75"><path d="M13 5l7 7-7 7v-4H4v-6h9V5z"/></svg>`);
-map.on('load',()=>{ map.loadImage(arrowSvg,(e,img)=>{ if(!e) map.addImage('arrow', img,{sdf:false,pixelRatio:2}); }); });
+/* ---------- One-way arrow sprite ---------- */
+const arrowSvg='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="white" opacity="0.75"><path d="M13 5l7 7-7 7v-4H4v-6h9V5z"/></svg>`);
+map.on('load',()=>{ map.loadImage(arrowSvg,(e,img)=>{ if(!e) map.addImage('arrow', img,{pixelRatio:2}); }); });
 
-/* ---------- Layer/state setup ---------- */
+/* ---------- Source-layer autodetect ---------- */
 let SOURCE_LAYER='edges';
 const tiles = new pmtiles.PMTiles(PMTILES_URL.replace('pmtiles://',''));
 tiles.getMetadata().then(meta=>{
@@ -176,40 +181,38 @@ const ramps = {
          'motorway','#ff7a00','trunk','#ffcc00','primary','#ffd34d','secondary','#66d17a',
          'tertiary','#8bd7a2','residential','#29adff','service','#b1b8c7','#29adff']
 };
-
-function edgePaint(){
+function edgePaint(mode){
+  const color = mode==='solid'||!ramps[mode] ? ramps.solid : ramps[mode];
   return {
-    'line-color': ramps[colorMode] || ramps.solid,
-    'line-width': ['interpolate',['linear'],['zoom'],
+    'line-color': color,
+    'line-width':['interpolate',['linear'],['zoom'],
       8, ['max',0.3,['*',0.008,['sqrt',['coalesce',['to-number',['get','count']],0]]]],
       12,['max',1.0,['*',0.02,['sqrt',['coalesce',['to-number',['get','count']],0]]]],
       15,['max',2.0,['*',0.04,['sqrt',['coalesce',['to-number',['get','count']],0]]]]
     ],
-    'line-opacity': 0.95
+    'line-opacity':0.95
   };
 }
 
 /* ---------- UI state ---------- */
 let basemap='dark', colorMode='solid', filterMode='all';
 let metrics=null, metricName='betweenness', metricDomain=[0,1];
-let showWeighted=false, showArrows=false, showNodes=false;
-let showFire=false, showMed=false, showNFHL=false, showFuture=false;
+let showWeighted=false, showArrows=false;
 
-/* ---------- Build base + edges ---------- */
+/* ---------- Build map ---------- */
 map.on('load', async ()=>{
   addBasemap(basemap);
 
   map.addSource('edges', {type:'vector', url: PMTILES_URL});
 
   map.addLayer({ id:'edges-line', type:'line', source:'edges', 'source-layer':SOURCE_LAYER,
-    layout:{'line-cap':'round','line-join':'round'}, paint: edgePaint()
+    layout:{'line-cap':'round','line-join':'round'}, paint: edgePaint(colorMode)
   });
 
-  // Weighted overlay (fixed: sits ABOVE edges and width truly scales)
+  // Weighted overlay (above edges; fixed)
   map.addLayer({ id:'edges-weighted', type:'line', source:'edges','source-layer':SOURCE_LAYER,
-    layout:{'line-cap':'round','line-join':'round', 'visibility':'none'},
-    paint:{
-      'line-color':'#ffcc00','line-opacity':0.65,
+    layout:{'line-cap':'round','line-join':'round','visibility':'none'},
+    paint:{ 'line-color':'#ffcc00','line-opacity':0.65,
       'line-width':['interpolate',['linear'],['coalesce',['to-number',['get','count']],0],
         0,0, 50,2, 100,3.2, 250,5, 500,7.5, 1000,11]
     }
@@ -217,10 +220,7 @@ map.on('load', async ()=>{
 
   // One-way arrows
   map.addLayer({ id:'oneway-arrows', type:'symbol', source:'edges','source-layer':SOURCE_LAYER,
-    layout:{
-      'symbol-placement':'line','symbol-spacing':60,'icon-image':'arrow','icon-size':0.6,
-      'visibility':'none'
-    },
+    layout:{'symbol-placement':'line','symbol-spacing':60,'icon-image':'arrow','icon-size':0.6,'visibility':'none'},
     filter:['any',
       ['==',['downcase',['get','oneway']],'yes'],
       ['in',['to-string',['get','oneway']],['literal',['1','true','True']]]
@@ -228,92 +228,77 @@ map.on('load', async ()=>{
     paint:{'icon-opacity':0.7}
   });
 
-  // Nodes, POIs, Floods, Routes:
-  addOptionalLayers();
+  await addOptionalLayers();      // nodes, POIs, floods, routes
+  await maybeLoadMetrics();       // optional JSON to enable metric color/filter
 
-  // Metrics (optional)
-  if (METRICS_URL){
-    try{
-      const j = await (await fetch(METRICS_URL,{mode:'cors'})).json();
-      metrics = Array.isArray(j) ? Object.fromEntries(j.map(o=>[String(o.id),o])) : j;
-      document.getElementById('metricBtn').style.display='';
-      document.getElementById('metricRow').style.display='';
-      document.getElementById('metricFilter').style.display='';
-      setMetricDomain();
-    }catch(_){}
-  }
-
-  wireUI();
+  wireUI();                       // buttons & toggles
 });
 
 /* ---------- Optional layers ---------- */
 async function addOptionalLayers(){
-  // Nodes
-  try{
-    map.addSource('nodes',{type:'geojson',data:NODES_URL});
-    map.addLayer({id:'nodes',type:'circle',source:'nodes',layout:{visibility:'none'},
-      paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,1.2,12,2.2,15,3.2],'circle-color':'#f4a261','circle-opacity':0.8,'circle-stroke-color':'#111','circle-stroke-width':0.5}
-    });
-    document.getElementById('toggleNodes').disabled=false;
-  }catch(_){ document.getElementById('toggleNodes').disabled=true; }
-
-  // Fire
-  try{
-    map.addSource('fire',{type:'geojson',data:FIRE_URL});
-    map.addLayer({id:'fire',type:'circle',source:'fire',layout:{visibility:'none'},
-      paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,2,12,3.5,15,5],'circle-color':'#f4a261','circle-stroke-color':'#111','circle-stroke-width':0.5}
-    });
-    document.getElementById('toggleFire').disabled=false;
-  }catch(_){ document.getElementById('toggleFire').disabled=true; }
-
-  // Medical
-  try{
-    map.addSource('med',{type:'geojson',data:MED_URL});
-    map.addLayer({id:'med',type:'circle',source:'med',layout:{visibility:'none'},
-      paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,2,12,3.5,15,5],'circle-color':'#e76f51','circle-stroke-color':'#111','circle-stroke-width':0.5}
-    });
-    document.getElementById('toggleMedical').disabled=false;
-  }catch(_){ document.getElementById('toggleMedical').disabled=true; }
-
-  // Floods (polygons)
-  try{
-    map.addSource('nfhl',{type:'geojson',data:NFHL_URL});
-    map.addLayer({id:'nfhl',type:'fill',source:'nfhl',layout:{visibility:'none'},
-      paint:{'fill-color':'#38bdf8','fill-opacity':0.35,'fill-outline-color':'#0ea5e9'}
-    });
-    document.getElementById('toggleNFHL').disabled=false;
-  }catch(_){ document.getElementById('toggleNFHL').disabled=true; }
+  addGeo('nodes', NODES_URL, {type:'circle', paint:{
+    'circle-radius':['interpolate',['linear'],['zoom'],8,1.2,12,2.2,15,3.2],
+    'circle-color':'#f4a261','circle-opacity':0.8,'circle-stroke-color':'#111','circle-stroke-width':0.5
+  }});
+  addGeo('fire',  FIRE_URL, {type:'circle', paint:{
+    'circle-radius':['interpolate',['linear'],['zoom'],8,2,12,3.5,15,5],
+    'circle-color':'#f4a261','circle-stroke-color':'#111','circle-stroke-width':0.5
+  }});
+  addGeo('med',   MED_URL, {type:'circle', paint:{
+    'circle-radius':['interpolate',['linear'],['zoom'],8,2,12,3.5,15,5],
+    'circle-color':'#e76f51','circle-stroke-color':'#111','circle-stroke-width':0.5
+  }});
+  addGeo('nfhl',  NFHL_URL, {type:'fill',  paint:{'fill-color':'#38bdf8','fill-opacity':0.35,'fill-outline-color':'#0ea5e9'}});
+  addGeo('future',FUTURE_URL,{type:'fill', paint:{'fill-color':'#22d3ee','fill-opacity':0.35,'fill-outline-color':'#06b6d4'}});
+  addGeo('route_base',  ROUTE_BASE,  {type:'line', paint:{'line-color':'#22c55e','line-width':4}});
+  addGeo('route_flood', ROUTE_FLOOD, {type:'line', paint:{'line-color':'#ef4444','line-width':4}});
 
   try{
-    map.addSource('future',{type:'geojson',data:FUTURE_URL});
-    map.addLayer({id:'future',type:'fill',source:'future',layout:{visibility:'none'},
-      paint:{'fill-color':'#22d3ee','fill-opacity':0.35,'fill-outline-color':'#06b6d4'}
-    });
-    document.getElementById('toggleFuture').disabled=false;
-  }catch(_){ document.getElementById('toggleFuture').disabled=true; }
-
-  // Routes
-  try{
-    map.addSource('route_base',{type:'geojson',data:ROUTE_BASE});
-    map.addLayer({id:'route_base',type:'line',source:'route_base',layout:{visibility:'none'},paint:{'line-color':'#22c55e','line-width':4}});
-    document.getElementById('toggleBaseline').disabled=false;
-  }catch(_){ document.getElementById('toggleBaseline').disabled=true; }
-
-  try{
-    map.addSource('route_flood',{type:'geojson',data:ROUTE_FLOOD});
-    map.addLayer({id:'route_flood',type:'line',source:'route_flood',layout:{visibility:'none'},paint:{'line-color':'#ef4444','line-width':4}});
-    document.getElementById('toggleFlooded').disabled=false;
-  }catch(_){ document.getElementById('toggleFlooded').disabled=true; }
-
-  // Show route deltas if stats present
-  try{
-    const stats = await (await fetch(ROUTE_STATS,{mode:'cors'})).json();
-    if (stats && stats.baseline && stats.flooded){
-      const t = document.getElementById('propTable');
+    const s = await (await fetch(ROUTE_STATS,{mode:'cors'})).json();
+    if (s && s.baseline && s.flooded){
+      const t=document.getElementById('propTable');
+      const delta = Math.round(s.flooded.minutes - s.baseline.minutes);
       t.insertAdjacentHTML('afterbegin',
-        `<div style="margin-bottom:8px"><b>Example travel time:</b> baseline ${fmtMin(stats.baseline.minutes)} vs flooded ${fmtMin(stats.flooded.minutes)} — Δ ${fmtMin(stats.flooded.minutes - stats.baseline.minutes)}</div>`);
+        `<div style="margin-bottom:8px"><b>Example travel time:</b> baseline ${Math.round(s.baseline.minutes)} min vs flooded ${Math.round(s.flooded.minutes)} min — Δ ${delta} min</div>`);
     }
   }catch(_){}
+}
+function addGeo(id, url, layer){ try{
+  map.addSource(id,{type:'geojson',data:url}); map.addLayer(Object.assign({id,source:id,layout:{visibility:'none'}}, layer));
+  document.getElementById(btnId(id)).disabled=false;
+}catch(_){ document.getElementById(btnId(id)).disabled=true; }
+}
+function btnId(id){
+  return ({
+    nodes:'toggleNodes', fire:'toggleFire', med:'toggleMedical',
+    nfhl:'toggleNFHL', future:'toggleFuture',
+    route_base:'toggleBaseline', route_flood:'toggleFlooded'
+  })[id] || 'noop';
+}
+
+/* ---------- Metrics (optional) ----------
+   If you provide METRICS_URL as:
+   {
+     "20933": {"degree":4,"betweenness":0.0021,"closeness":0.31,"pagerank":0.00042,"community":12},
+     "49263": {"degree":7,"betweenness":0.0007}
+   }
+   The UI will unlock “By metric” color + “Top (metric)” filter and show values in the table.
+*/
+async function maybeLoadMetrics(){
+  if (!METRICS_URL) return;
+  try{
+    const j = await (await fetch(METRICS_URL,{mode:'cors'})).json();
+    metrics = Array.isArray(j) ? Object.fromEntries(j.map(o=>[String(o.id),o])) : j;
+    document.getElementById('metricBtn').style.display='';
+    document.getElementById('metricRow').style.display='';
+    document.getElementById('metricFilter').style.display='';
+    setMetricDomain();
+  }catch(_){}
+}
+function setMetricDomain(){
+  const vals=[]; for(const k in metrics){ const v=+metrics[k]?.[metricName]; if(Number.isFinite(v)) vals.push(v); }
+  if(!vals.length) return; vals.sort((a,b)=>a-b);
+  metricDomain=[vals[Math.floor(vals.length*0.02)], vals[Math.floor(vals.length*0.98)]];
 }
 
 /* ---------- Basemap ---------- */
@@ -330,30 +315,20 @@ function addBasemap(mode){
 
 /* ---------- Filters ---------- */
 function applyFilter(){
-  if (!map.getLayer('edges-line')) return;
-  let f = ['>=',['coalesce',['to-number',['get','count']],0], 0];
-  if (filterMode==='top10'){
-    f = ['>=',['coalesce',['to-number',['get','count']],0], ['*',0.9,['max',['to-number',['get','count']],0]]]; // heuristic
-  } else if (filterMode==='top1'){
-    f = ['>=',['coalesce',['to-number',['get','count']],0], ['*',0.99,['max',['to-number',['get','count']],0]]];
-  } else if (filterMode==='metricTop' && metrics){
-    // show only edges with metric >= p90 of domain
+  if(!map.getLayer('edges-line')) return;
+  let f = ['>=',['coalesce',['to-number',['get','count']],0], 0]; // default = all
+  if(filterMode==='top10'){
+    f=['>=',['coalesce',['to-number',['get','count']],0], ['*',0.90,['max',['to-number',['get','count']],0]]];
+  }else if(filterMode==='top1'){
+    f=['>=',['coalesce',['to-number',['get','count']],0], ['*',0.99,['max',['to-number',['get','count']],0]]];
+  }else if(filterMode==='metricTop' && metrics){
     const thr = metricDomain[0] + 0.90*(metricDomain[1]-metricDomain[0]);
-    f = ['>=',['coalesce',['feature-state',metricName],['to-number',['get',metricName]],0], thr];
+    f=['>=',['coalesce',['feature-state',metricName],['to-number',['get',metricName]],0], thr];
   }
   map.setFilter('edges-line', f);
-  if (map.getLayer('edges-weighted')){
+  if(map.getLayer('edges-weighted')){
     map.setFilter('edges-weighted', ['all', f, ['>=',['coalesce',['to-number',['get','count']],0],250]]);
   }
-}
-
-/* ---------- Metrics ---------- */
-function setMetricDomain(){
-  const vals=[];
-  for (const k in metrics){ const v=+metrics[k]?.[metricName]; if(Number.isFinite(v)) vals.push(v); }
-  if (!vals.length) return;
-  vals.sort((a,b)=>a-b);
-  metricDomain=[vals[Math.floor(vals.length*0.02)], vals[Math.floor(vals.length*0.98)]];
 }
 
 /* ---------- UI wiring ---------- */
@@ -367,8 +342,14 @@ function wireUI(){
   const colorBar=document.getElementById('colorBar');
   colorBar.addEventListener('click', e=>{
     const b=e.target.closest('.btn'); if(!b) return; colorMode=b.dataset.color; setActive(colorBar,b);
-    map.setPaintProperty('edges-line','line-color', colorMode==='metric' ? ['interpolate',['linear'],['coalesce',['feature-state',metricName],['to-number',['get',metricName]],0],
-      metricDomain[0],'#264653',(metricDomain[0]+metricDomain[1])/2,'#2a9d8f',metricDomain[1],'#e9c46a'] : (ramps[colorMode]||ramps.solid));
+    if(colorMode==='metric'){
+      document.getElementById('metricRow').style.display = metrics ? '' : 'none';
+      map.setPaintProperty('edges-line','line-color',
+        ['interpolate',['linear'],['coalesce',['feature-state',metricName],['to-number',['get',metricName]],0],
+          metricDomain[0],'#264653',(metricDomain[0]+metricDomain[1])/2,'#2a9d8f',metricDomain[1],'#e9c46a']);
+    }else{
+      map.setPaintProperty('edges-line','line-color', (ramps[colorMode]||ramps.solid));
+    }
   });
 
   // filter
@@ -377,26 +358,27 @@ function wireUI(){
     const b=e.target.closest('.btn'); if(!b) return; filterMode=b.dataset.filter; setActive(filterBar,b); applyFilter();
   });
 
-  // metric controls visibility
-  if (metrics){ document.getElementById('metricBtn').style.display=''; document.getElementById('metricRow').style.display=''; document.getElementById('metricFilter').style.display=''; }
-
+  // metric select
   document.getElementById('metricSelect').addEventListener('change', e=>{
-    metricName=e.target.value; setMetricDomain(); if(colorMode==='metric'){ map.setPaintProperty('edges-line','line-color',
-      ['interpolate',['linear'],['coalesce',['feature-state',metricName],['to-number',['get',metricName]],0],
-      metricDomain[0],'#264653',(metricDomain[0]+metricDomain[1])/2,'#2a9d8f',metricDomain[1],'#e9c46a']); }
+    metricName=e.target.value; setMetricDomain();
+    if(colorMode==='metric'){
+      map.setPaintProperty('edges-line','line-color',
+        ['interpolate',['linear'],['coalesce',['feature-state',metricName],['to-number',['get',metricName]],0],
+          metricDomain[0],'#264653',(metricDomain[0]+metricDomain[1])/2,'#2a9d8f',metricDomain[1],'#e9c46a']);
+    }
     applyFilter();
   });
 
   // toggles
-  bindToggle('toggleWeighted', v=>{ showWeighted=v; map.setLayoutProperty('edges-weighted','visibility', v?'visible':'none'); });
-  bindToggle('toggleArrows',   v=>{ showArrows=v;   map.setLayoutProperty('oneway-arrows','visibility', v?'visible':'none'); });
-  bindToggle('toggleNodes',    v=>{ showNodes=v;    map.setLayoutProperty('nodes','visibility', v?'visible':'none'); });
-  bindToggle('toggleFire',     v=>{ showFire=v;     map.setLayoutProperty('fire','visibility', v?'visible':'none'); });
-  bindToggle('toggleMedical',  v=>{ showMed=v;      map.setLayoutProperty('med','visibility', v?'visible':'none'); });
-  bindToggle('toggleNFHL',     v=>{ showNFHL=v;     map.setLayoutProperty('nfhl','visibility', v?'visible':'none'); });
-  bindToggle('toggleFuture',   v=>{ showFuture=v;   map.setLayoutProperty('future','visibility', v?'visible':'none'); });
-  bindToggle('toggleBaseline', v=>{ map.setLayoutProperty('route_base','visibility', v?'visible':'none'); });
-  bindToggle('toggleFlooded',  v=>{ map.setLayoutProperty('route_flood','visibility', v?'visible':'none'); });
+  bindToggle('toggleWeighted', v=> map.setLayoutProperty('edges-weighted','visibility', v?'visible':'none'));
+  bindToggle('toggleArrows',   v=> map.setLayoutProperty('oneway-arrows','visibility', v?'visible':'none'));
+  bindToggle('toggleNodes',    v=> map.setLayoutProperty('nodes','visibility', v?'visible':'none'));
+  bindToggle('toggleFire',     v=> map.setLayoutProperty('fire','visibility', v?'visible':'none'));
+  bindToggle('toggleMedical',  v=> map.setLayoutProperty('med','visibility', v?'visible':'none'));
+  bindToggle('toggleNFHL',     v=> map.setLayoutProperty('nfhl','visibility', v?'visible':'none'));
+  bindToggle('toggleFuture',   v=> map.setLayoutProperty('future','visibility', v?'visible':'none'));
+  bindToggle('toggleBaseline', v=> map.setLayoutProperty('route_base','visibility', v?'visible':'none'));
+  bindToggle('toggleFlooded',  v=> map.setLayoutProperty('route_flood','visibility', v?'visible':'none'));
 
   // flood opacity
   document.getElementById('floodOpacity').addEventListener('input', e=>{
@@ -404,89 +386,87 @@ function wireUI(){
     if(map.getLayer('future')) map.setPaintProperty('future','fill-opacity', v);
   });
 
-  // detail table (raw toggle)
+  // detail table raw toggle
   document.getElementById('toggleRaw').addEventListener('click', e=>{
-    e.preventDefault(); showRaw=!showRaw; renderProps(lastProps);
+    e.preventDefault(); showRaw=!showRaw; if(lastProps) renderProps(lastProps);
   });
 }
 
-/* ---------- Helpers ---------- */
 function setActive(container, btn){ [...container.querySelectorAll('.btn')].forEach(b=>b.classList.toggle('active', b===btn)); }
-function fmtMin(x){ const m=Math.round(x); return `${m} min`; }
 function bindToggle(id, fn){ const el=document.getElementById(id); el.addEventListener('click', ()=>{ el.classList.toggle('active'); fn(el.classList.contains('active')); }); }
 
-/* ---------- Tooltips + details (clean labels) ---------- */
+/* ---------- Tooltip & details ---------- */
 const tipEl=document.getElementById('tip'); const propsEl=document.getElementById('propTable');
-let showRaw=false, lastProps=null;
-const LABELS={
-  id:'ID', name:'Name', ref:'Ref', functional_class:'Class', count:'Traffic index',
-  oneway:'Direction', lanes:'Lanes', maxspeed:'Max speed', surface:'Surface', divided:'Divided',
-  zipcode:'ZIP'
+let showRaw=false, lastProps=null, lastPinned=false;
+
+const LABELS = {
+  id:'ID', name:'Name', ref:'Ref', functional_class:'Class',
+  count:'Traffic index', oneway:'Direction', lanes:'Lanes',
+  maxspeed:'Max speed', surface:'Surface', divided:'Divided', zipcode:'ZIP'
 };
-const FORMAT={
-  Direction:v=>{
-    const y = String(v).toLowerCase();
-    return (y==='yes'||y==='true'||y==='1') ? 'One-way' : 'Two-way';
-  },
-  'Max speed':v=> v? `${v} mph` : ''
+const FORMAT = {
+  'Direction': v => (String(v).toLowerCase()==='yes'||v==='1'||String(v).toLowerCase()==='true') ? 'One-way' : 'Two-way',
+  'Max speed': v => v ? `${v} mph` : '',
+  'Divided'  : v => (v ? 'yes':'no')
 };
 
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function renderTable(obj){
+  if(showRaw) return `<pre style="white-space:pre-wrap;margin:0">${esc(JSON.stringify(obj,null,2))}</pre>`;
+  const keys=Object.keys(obj); if(!keys.length) return '(no selected fields)';
+  let h='<table>'; for(const k of keys){ h+=`<tr><td>${esc(k)}</td><td>${esc(obj[k])}</td></tr>` } return h+'</table>';
+}
 function cleanProps(p){
-  const out={}; for(const k in LABELS){
-    const src=k, lab=LABELS[k]; let v=p?.[src];
-    if(v==null || v==='') continue; if(FORMAT[lab]) v=FORMAT[lab](v); out[lab]=v;
-  }
-  // If metrics present, show a few
-  if (metrics){
-    const id = p?.id!=null ? String(p.id) : null;
-    const m = id? metrics[id] : null;
-    if (m){
-      if (m.betweenness!=null) out['Betweenness'] = +m.betweenness;
-      if (m.degree!=null) out['Degree'] = +m.degree;
-      if (m.closeness!=null) out['Closeness'] = +m.closeness;
-      if (m.pagerank!=null) out['PageRank'] = +m.pagerank;
-      if (m.community!=null) out['Community'] = m.community;
+  const out={}; for(const key in LABELS){ const lab=LABELS[key]; let v=p?.[key]; if(v==null||v==='') continue; if(FORMAT[lab]) v=FORMAT[lab](v); out[lab]=v; }
+  // metrics into table if available
+  if(metrics && (p?.id!=null)){
+    const m=metrics[String(p.id)]; if(m){
+      if(m.betweenness!=null) out['Betweenness']=+m.betweenness;
+      if(m.degree!=null)      out['Degree']=+m.degree;
+      if(m.closeness!=null)   out['Closeness']=+m.closeness;
+      if(m.pagerank!=null)    out['PageRank']=+m.pagerank;
+      if(m.community!=null)   out['Community']=m.community;
     }
   }
   return out;
 }
-function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
-function renderTable(obj){
-  if (showRaw) { return `<pre style="white-space:pre-wrap">${esc(JSON.stringify(obj,null,2))}</pre>`; }
-  const k=Object.keys(obj); if(!k.length) return '(no selected fields)';
-  let h='<table>'; for(const x of k){ h+=`<tr><td>${esc(x)}</td><td>${esc(obj[x])}</td></tr>` } return h+'</table>';
-}
 
 map.on('mousemove', e=>{
   const f=map.queryRenderedFeatures(e.point,{layers:['edges-line','edges-weighted']})[0];
-  if(!f){ if(!lastPinned){tipEl.classList.add('hidden');} return; }
+  if(!f){ if(!lastPinned) tipEl.classList.add('hidden'); return; }
   const nm=f.properties?.name||f.properties?.ref||'Edge';
   const cnt=+f.properties?.count;
-  tipEl.innerHTML = `<strong>${esc(nm)}</strong>${Number.isFinite(cnt)?` — count: ${cnt}`:''}`;
-  tipEl.style.left = e.originalEvent.clientX+'px'; tipEl.style.top = e.originalEvent.clientY+'px';
+  tipEl.innerHTML=`<strong>${esc(nm)}</strong>${Number.isFinite(cnt)?` — count: ${cnt}`:''}`;
+  tipEl.style.left=e.originalEvent.clientX+'px'; tipEl.style.top=e.originalEvent.clientY+'px';
   tipEl.classList.remove('hidden');
 });
-let lastPinned=false;
+map.on('mouseleave','edges-line',()=>{ if(!lastPinned) tipEl.classList.add('hidden'); });
+map.on('mouseleave','edges-weighted',()=>{ if(!lastPinned) tipEl.classList.add('hidden'); });
+
 map.on('click', e=>{
   const f=map.queryRenderedFeatures(e.point,{layers:['edges-line','edges-weighted']})[0];
-  if(!f){ lastPinned=false; tipEl.classList.add('hidden'); propsEl.textContent='(click an edge to pin its properties)'; return; }
+  if(!f){ lastPinned=false; tipEl.classList.add('hidden'); propsEl.textContent='(click an edge to pin its properties)'; lastProps=null; return; }
   lastPinned=true; lastProps=f.properties||{}; propsEl.innerHTML=renderTable(cleanProps(lastProps));
 });
 
-/* ---------- Metric painting via feature-state (if provided later) ---------- */
+/* ---------- Metric painting via feature-state (when metrics provided) ---------- */
 map.on('render', throttle(()=>{
-  if (!metrics || colorMode!=='metric') return;
+  if(!metrics || colorMode!=='metric') return;
   const bbox=[[0,0],[map.getCanvas().width, map.getCanvas().height]];
-  const feats = map.queryRenderedFeatures(bbox,{layers:['edges-line']});
-  for (const f of feats){
-    const id = f.id ?? f.properties?.id; if(id==null) continue;
-    const m = metrics[String(id)]; if(!m) continue;
+  const feats=map.queryRenderedFeatures(bbox,{layers:['edges-line']});
+  for(const f of feats){
+    const id=f.id ?? f.properties?.id; if(id==null) continue;
+    const m=metrics[String(id)]; if(!m) continue;
     map.setFeatureState({source:'edges',sourceLayer:SOURCE_LAYER,id:f.id}, m);
   }
   applyFilter();
 }, 400));
 
 function throttle(fn,wait){let t=0;return(...a)=>{const n=Date.now();if(n-t>wait){t=n;fn(...a);}}}
+
+/* ---------- Simple helpers ---------- */
+map.on('error', e=>console.error('Map error:', e?.error||e));
+})();
 </script>
 </body>
 </html>
