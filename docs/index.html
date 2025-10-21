@@ -13,7 +13,6 @@
 <style>
 :root{
   --bg:#0b0b0b; --panel:#0009; --border:rgba(255,255,255,.12); --text:#eef5ff; --muted:#a8b3c7;
-  --edge:#29adff; --fire:#ff8a00; --med:#e76f51; --flood:#38bdf8; --future:#22d3ee; --r1:#ffd34d; --r2:#9ae6b4;
 }
 html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
 #map{position:absolute;inset:0}
@@ -24,9 +23,10 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/
 .btn{padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:#151515;color:var(--text);cursor:pointer;font-size:13px}
 .btn.active{background:#1d2a36;border-color:#2c3a4b;color:#bfe1ff}
 .legend{display:flex;gap:10px;align-items:center;margin-top:6px;flex-wrap:wrap}
-.sw{width:24px;height:8px;border-radius:5px;background:var(--edge)}
-.sw.fire{background:var(--fire)} .sw.med{background:var(--med)} .sw.flood{background:var(--flood)} .sw.future{background:var(--future)}
-.sw.r1{background:var(--r1)} .sw.r2{background:var(--r2)}
+.sw{width:24px;height:8px;border-radius:5px;background:#29adff}
+.sw.r1{background:#ffd34d}.sw.r2{background:#9ae6b4}
+.sw.fire{background:#ff8a00}.sw.med{background:#e76f51}
+.sw.flood{background:#38bdf8}.sw.future{background:#22d3ee}
 .divider{height:1px;background:var(--border);margin:8px 0}
 .props{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
 .props table{width:100%;border-collapse:collapse}
@@ -67,7 +67,7 @@ summary{cursor:pointer}
 
   <div class="details">
     <b>Rescue planner</b>
-    <div class="small">Click map to set a rescue location. We’ll route to the most feasible <b>Fire</b> station, then to the most feasible <b>Medical</b> facility in one step. Routes follow streets (OSRM) and prefer paths that avoid visible flood layers.</div>
+    <div class="small">Click map to set a rescue location. We’ll route to the most feasible <b>Fire</b> station, then to the most feasible <b>Medical</b> facility in one step (OSRM; prefers routes avoiding visible flood layers).</div>
     <div id="rescueInfo" class="small" style="margin-top:8px"></div>
   </div>
 
@@ -100,12 +100,13 @@ summary{cursor:pointer}
 (() => {
 /* ---------------- Data URLs ---------------- */
 const PMTILES_URL = 'pmtiles://https://media.githubusercontent.com/media/dstroder-digital/Network/main/docs/data/app/edges.pmtiles';
+const NODES_URL   = 'https://dstroder-digital.github.io/Network/data/app/nodes.geojson';
 const FIRE_URL    = 'https://dstroder-digital.github.io/Network/data/app/fire_stations.geojson';
 const MED_URL     = 'https://dstroder-digital.github.io/Network/data/app/medical_facilities.geojson';
 const NFHL_URL    = 'https://dstroder-digital.github.io/Network/data/app/nfhl_dissolved.geojson';
 const FUTURE_URL  = 'https://dstroder-digital.github.io/Network/data/app/future_flood_dissolved.geojson';
 const METRICS_URL = 'https://dstroder-digital.github.io/Network/data/app/edge_metrics.json'; // JSON export from parquet
-const JSON_ID_FIELD = 'eid'; // your JSON uses 'eid' per screenshot
+const JSON_ID_FIELD = 'eid'; // your JSON uses 'eid'
 
 /* -------- Routing (OSRM): change to your own server for production -------- */
 const OSRM_BASE = 'https://router.project-osrm.org';
@@ -153,8 +154,7 @@ tiles.getMetadata().then(meta=>{
 }).catch(()=>{});
 
 /* -------- Build core layers -------- */
-let fireFC=null, medFC=null, nfhlFC=null, futureFC=null;
-let metricMap=null; // Map(eid -> ebetweenness)
+let fireFC=null, medFC=null, nfhlFC=null, futureFC=null, metricMap=null;
 
 map.on('load', async ()=>{
   // edges
@@ -162,7 +162,7 @@ map.on('load', async ()=>{
   map.addLayer({id:'edges-line',type:'line',source:'edges','source-layer':SOURCE_LAYER,
     layout:{'line-cap':'round','line-join':'round'},
     paint:{
-      'line-color':'#29adff',  /* will be overridden by metric if loaded */
+      'line-color':'#29adff',  /* overridden by metric if JSON present */
       'line-opacity':0.95,
       'line-width':['interpolate',['linear'],['zoom'], 8,0.6, 12,1.3, 15,2.2]
     }
@@ -182,15 +182,15 @@ map.on('load', async ()=>{
     paint:{'icon-opacity':0.9}
   });
 
-  // subtle weighted overlay (if present)
-  map.addLayer({id:'edges-weighted',type:'line',source:'edges','source-layer':SOURCE_LAYER,
-    layout:{'line-cap':'round','line-join':'round'},
-    paint:{
-      'line-color':'#9bf6ff',
-      'line-opacity': weightField?0.35:0,
-      'line-width':['interpolate',['linear'],['coalesce',['to-number',['get',weightField||'__none__']],0], 0,0, 5,1.1, 20,3, 50,5, 150,8, 400,12]
-    }
-  });
+  // nodes (always visible, subtle)
+  try{
+    const nodes = await (await fetch(NODES_URL)).json();
+    map.addSource('nodes',{type:'geojson',data:nodes});
+    map.addLayer({id:'nodes',type:'circle',source:'nodes',
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,1.0,12,1.8,15,2.4],
+             'circle-color':'#f4a261','circle-opacity':0.35,'circle-stroke-color':'#111','circle-stroke-width':0.5}});
+    console.log('Nodes loaded:', nodes.features?.length ?? 0);
+  }catch(err){ console.warn('Nodes failed:', err); }
 
   await addPOIs();
   await loadFloods();
@@ -203,20 +203,22 @@ map.on('load', async ()=>{
 async function addPOIs(){
   try{
     fireFC = await (await fetch(FIRE_URL)).json();
+    console.log('Fire stations:', fireFC.features?.length ?? 0);
     map.addSource('fire',{type:'geojson',data:fireFC});
     map.addLayer({id:'fire',type:'symbol',source:'fire',layout:{
       'icon-image':'firetruck','icon-size':['interpolate',['linear'],['zoom'],8,0.45,12,0.65,15,0.85],'icon-allow-overlap':true,'visibility':'visible'
     }});
-  }catch(_){}
+  }catch(err){ console.warn('Fire stations failed:', err); }
 
   try{
     const medAll = await (await fetch(MED_URL)).json();
     medFC = {type:'FeatureCollection',features:(medAll.features||[]).filter(f=>(f.properties?.name||'').trim().length>0)};
+    console.log('Medical facilities (named):', medFC.features?.length ?? 0);
     map.addSource('med',{type:'geojson',data:medFC});
     map.addLayer({id:'med',type:'symbol',source:'med',layout:{
       'icon-image':'medicon','icon-size':['interpolate',['linear'],['zoom'],8,0.45,12,0.65,15,0.85],'icon-allow-overlap':true,'visibility':'visible'
     }});
-  }catch(_){}
+  }catch(err){ console.warn('Medical facilities failed:', err); }
 }
 
 /* -------- Flood overlays -------- */
@@ -224,11 +226,11 @@ async function loadFloods(){
   try{ nfhlFC = await (await fetch(NFHL_URL)).json();
        map.addSource('nfhl',{type:'geojson',data:nfhlFC});
        map.addLayer({id:'nfhl',type:'fill',source:'nfhl',layout:{visibility:'none'},
-         paint:{'fill-color':'#38bdf8','fill-opacity':0.35,'fill-outline-color':'#0ea5e9'}});}catch(_){}
+         paint:{'fill-color':'#38bdf8','fill-opacity':0.35,'fill-outline-color':'#0ea5e9'}});}catch(err){ console.warn('NFHL failed:', err); }
   try{ futureFC = await (await fetch(FUTURE_URL)).json();
        map.addSource('future',{type:'geojson',data:futureFC});
        map.addLayer({id:'future',type:'fill',source:'future',layout:{visibility:'none'},
-         paint:{'fill-color':'#22d3ee','fill-opacity':0.35,'fill-outline-color':'#06b6d4'}});}catch(_){}
+         paint:{'fill-color':'#22d3ee','fill-opacity':0.35,'fill-outline-color':'#06b6d4'}});}catch(err){ console.warn('Future flood failed:', err); }
 }
 
 /* -------- Metrics (ebetweenness) -------- */
@@ -254,21 +256,22 @@ async function loadMetrics(){
         }
       }
     }, 400));
-  }catch(_){
-    // keep solid color if JSON missing
+    console.log('Metrics loaded:', metricMap.size);
+  }catch(err){
+    console.warn('Metrics JSON not loaded — edges remain solid color.', err);
   }
 }
 
 /* -------- Rescue routing pipeline -------- */
 function addRescueGraphics(){
   map.addSource('rescue_pt',{type:'geojson',data:turf.featureCollection([])});
-  map.addLayer({id:'rescue_pt',type:'circle',source:'rescue_pt',paint:{'circle-radius':6,'circle-color':'#fff','circle-stroke-color':'#111','circle-stroke-width':1}});
+  map.addLayer({id:'rescue_pt',type:'circle',source:'rescue_pt',paint:{'circle-radius':6,'circle-color':'#ffffff','circle-stroke-color':'#111','circle-stroke-width':1}});
 
   map.addSource('route_fire',{type:'geojson',data:turf.featureCollection([])});
-  map.addLayer({id:'route_fire',type:'line',source:'route_fire',paint:{'line-color':'var(--r1)','line-width':4}});
+  map.addLayer({id:'route_fire',type:'line',source:'route_fire',paint:{'line-color':'#ffd34d','line-width':4}});
 
   map.addSource('route_med',{type:'geojson',data:turf.featureCollection([])});
-  map.addLayer({id:'route_med',type:'line',source:'route_med',paint:{'line-color':'var(--r2)','line-width':4}});
+  map.addLayer({id:'route_med',type:'line',source:'route_med',paint:{'line-color':'#9ae6b4','line-width':4}});
 }
 
 const rescueInfo=document.getElementById('rescueInfo');
@@ -344,7 +347,6 @@ async function routeOSRM(a,b,floodPolys){
     function floodOverlap(line){
       if(!floodPolys.length) return 0;
       let total=0;
-      // coarse estimate: sum length of route segments that fall inside any polygon
       const segs = turf.segmentReduce(line,(acc,cur)=>{ acc.push(cur); return acc; },[]);
       for(const s of segs){
         if(floodPolys.some(poly=>turf.booleanWithin(turf.midpoint(s.geometry.coordinates[0],s.geometry.coordinates[1]), poly))){
@@ -357,7 +359,7 @@ async function routeOSRM(a,b,floodPolys){
     for(let i=1;i<routes.length;i++){ const s=floodOverlap(routes[i].geom); if(s<score){best=routes[i]; score=s;} }
     best.reason = (floodPolys.length? (score>0?'minimized flooded overlap':'avoided flooded areas') : 'shortest-time from OSRM');
     return best;
-  }catch(_){ return null; }
+  }catch(err){ console.warn('OSRM route failed:', err); return null; }
 }
 
 /* -------- UI -------- */
