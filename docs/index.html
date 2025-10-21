@@ -1,87 +1,142 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Edges (PMTiles)</title>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Network — PMTiles Viewer</title>
 
-    <!-- MapLibre -->
-    <link href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css" rel="stylesheet" />
-    <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
+  <!-- MapLibre GL -->
+  <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet">
+  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
 
-    <!-- PMTiles (defines global window.pmtiles). No async/defer. -->
-    <script src="https://unpkg.com/pmtiles@3.5.0/dist/pmtiles.js"></script>
+  <!-- PMTiles (must load BEFORE your script) -->
+  <script src="https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js"></script>
 
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { position: absolute; inset: 0; }
+    .hud {
+      position: absolute; top: 12px; left: 12px; z-index: 10;
+      background: rgba(0,0,0,0.6); color: #fff; padding: 8px 10px; border-radius: 8px;
+      font: 14px/1.3 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      box-shadow: 0 6px 20px rgba(0,0,0,.25);
+    }
+    .hud a { color: #9ad0ff; text-decoration: none; }
+    .hud a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="hud">
+    <strong>Edges (PMTiles)</strong><br>
+    Pan/zoom to explore. Press <kbd>Alt</kbd> while dragging to rotate.
+  </div>
 
-    <style>
-      html, body, #map { height: 100%; margin: 0; }
-      body { background: #111; color: #eee; }
-    </style>
-  </head>
-  <body>
-    <div id="map"></div>
+  <script>
+    // ---------- 1) Wire MapLibre to PMTiles ----------
+    // PMTiles exposes a global 'pmtiles' when loaded from the CDN.
+    const protocol = new pmtiles.Protocol();
+    maplibregl.addProtocol('pmtiles', protocol.tile);
 
-    <!-- Your app code MUST be inside this <script> and after pmtiles.js -->
-    <script>
-      // Add PMTiles protocol
-      const protocol = new pmtiles.Protocol();
-      maplibregl.addProtocol("pmtiles", protocol.tile);
+    // Remove protocol on page unload (good hygiene, not strictly required)
+    window.addEventListener('unload', () => {
+      try { maplibregl.removeProtocol('pmtiles'); } catch(e) {}
+    });
 
-      // Absolute URL to your PMTiles on Pages
-      const EDGES_PMTILES = "https://dstroder-digital.github.io/Network/docs/data/app/edges.pmtiles";
+    // ---------- 2) Configure your PMTiles URL ----------
+    // If the file lives at: https://dstroder-digital.github.io/Network/data/edges.pmtiles
+    // then keep the URL below as-is. Otherwise, change the path accordingly.
+    const PMTILES_URL = 'pmtiles://https://dstroder-digital.github.io/Network/data/edges.pmtiles';
 
-      // Basic map style (OSM raster + your vector layer)
-      const style = {
+    // ---------- 3) Create the map ----------
+    const map = new maplibregl.Map({
+      container: 'map',
+      hash: true,
+      pitchWithRotate: true,
+      dragRotate: true,
+      style: {
         version: 8,
-        sources: {
-          osm: {
-            type: "raster",
-            tiles: ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"],
-            tileSize: 256,
-            attribution: "© OpenStreetMap contributors"
-          },
-          edges: {
-            type: "vector",
-            url: `pmtiles://${EDGES_PMTILES}`
-          }
-        },
-        layers: [
-          { id: "osm", type: "raster", source: "osm" },
-          {
-            id: "edges",
-            type: "line",
-            source: "edges",
-            "source-layer": "edges",   // must match your tippecanoe --layer name
-            paint: { "line-color": "#ff4d4d", "line-width": 2 }
-          }
-        ]
-      };
+        // Minimal dark background so your data pops
+        layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#0b0b0b' } }],
+        sources: {}
+      },
+      // Set a sane default view; adjust to your city if you like
+      center: [-80.8431, 35.2271], // Charlotte, NC
+      zoom: 10
+    });
 
-      const map = new maplibregl.Map({
-        container: "map",
-        style,
-        center: [-80.84, 35.23],  // fallback center
-        zoom: 9
+    // ---------- 4) Add your PMTiles vector source + layers ----------
+    map.on('load', () => {
+      // Add the PMTiles vector source
+      map.addSource('edges', {
+        type: 'vector',
+        url: PMTILES_URL
       });
 
-      map.addControl(new maplibregl.NavigationControl(), "top-right");
+      // IMPORTANT: replace 'edges' below with the actual source-layer name inside your PMTiles.
+      // Common names might be 'edges', 'lines', or similar. If unknown, open DevTools -> Network
+      // and check the returned tile JSON, or inspect your tileset metadata.
+      const SOURCE_LAYER = 'edges'; // <-- change if your source-layer is different
 
-      // OPTIONAL: try to read center/bounds from the PMTiles header and fly there
-      (async () => {
-        try {
-          const p = new pmtiles.PMTiles(EDGES_PMTILES);
-          const header = await p.getHeader();
-          if (header?.center && Array.isArray(header.center) && header.center.length >= 2) {
-            const [lng, lat, z] = header.center;
-            map.once("load", () => map.easeTo({ center: [lng, lat], zoom: z ?? 10 }));
-          } else if (header?.bounds && Array.isArray(header.bounds) && header.bounds.length === 4) {
-            const b = header.bounds; // [w,s,e,n]
-            map.once("load", () => map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 40 }));
-          }
-        } catch (e) {
-          console.warn("Could not read PMTiles header/metadata:", e);
+      // Line layer
+      map.addLayer({
+        id: 'edges-line',
+        type: 'line',
+        source: 'edges',
+        'source-layer': SOURCE_LAYER,
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round',
+          visibility: 'visible'
+        },
+        paint: {
+          'line-color': ['case',
+            ['has', 'color'], ['get', 'color'], // if your tiles carry a 'color' property
+            '#29adff'
+          ],
+          'line-opacity': 0.85,
+          // Thicker lines at higher zooms; tweak as needed
+          'line-width': [
+            'interpolate', ['linear'], ['zoom'],
+            8, 0.6,
+            12, 1.2,
+            14, 2.0,
+            16, 3.5
+          ]
         }
-      })();
-    </script>
-  </body>
+      });
+
+      // Optional: show thicker/highlighted primary roads if you have a 'weight' or 'count' attribute
+      if (!map.getLayer('edges-weighted')) {
+        map.addLayer({
+          id: 'edges-weighted',
+          type: 'line',
+          source: 'edges',
+          'source-layer': SOURCE_LAYER,
+          filter: ['>=', ['coalesce', ['get', 'count'], 0], 1],
+          paint: {
+            'line-color': '#ffcc00',
+            'line-opacity': 0.55,
+            'line-width': [
+              'interpolate', ['linear'], ['coalesce', ['get', 'count'], 0],
+              0, 0.0,
+              10, 1.0,
+              100, 3.0,
+              1000, 6.0
+            ]
+          }
+        });
+      }
+
+      // Navigation controls
+      map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+      map.addControl(new maplibregl.ScaleControl({ maxWidth: 160, unit: 'imperial' }));
+    });
+
+    // ---------- 5) Basic runtime checks ----------
+    map.on('error', (e) => {
+      console.error('Map error:', e && e.error ? e.error : e);
+    });
+  </script>
+</body>
 </html>
