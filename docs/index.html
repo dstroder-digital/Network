@@ -11,7 +11,9 @@
 <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 
 <style>
-:root{--bg:#0b0b0b;--panel:#0009;--border:rgba(255,255,255,.12);--text:#eef5ff;--muted:#a8b3c7}
+:root{
+  --bg:#0b0b0b; --panel:#0009; --border:rgba(255,255,255,.12); --text:#eef5ff; --muted:#a8b3c7;
+}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
 #map{position:absolute;inset:0}
 .hud{position:absolute;top:12px;left:12px;z-index:20;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
@@ -24,7 +26,7 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/
 .sw{width:24px;height:8px;border-radius:5px;background:#29adff}
 .sw.r1{background:#ffd34d}.sw.r2{background:#9ae6b4}
 .sw.fire{background:#ff8a00}.sw.med{background:#e76f51}
-.sw.flood{background:#38bdf8}.sw.future{background:#22d3ee}.sw.pink{background:#ff6bb5}
+.sw.flood{background:#38bdf8}.sw.future{background:#22d3ee}
 .divider{height:1px;background:var(--border);margin:8px 0}
 .props{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
 .props table{width:100%;border-collapse:collapse}
@@ -68,7 +70,7 @@ summary{cursor:pointer}
     <div>
       <button class="btn active" id="colorMetric">By ebetweenness</button>
       <button class="btn" id="colorWeight">By weight</button>
-      <span class="small">Routing: OSRM default car profile (weights affect coloring unless you run custom OSRM).</span>
+      <span class="small">Routing note: OSRM uses its own profile; your custom weights affect only coloring unless you run OSRM with a custom profile.</span>
     </div>
   </div>
 
@@ -76,14 +78,13 @@ summary{cursor:pointer}
 
   <div class="details">
     <b>Rescue planner</b>
-    <div class="small">Click map to set a rescue location. We route to the most feasible <b>Fire</b> station, then to the most feasible <b>Medical</b> facility in one step (OSRM). If flood layers are visible, we prefer alternatives with less overlap, and mark all flooded streets <b style="color:#ff6bb5">pink</b>.</div>
+    <div class="small">Click map to set a rescue location. We’ll route to the most feasible <b>Fire</b> station, then to the most feasible <b>Medical</b> facility in one step (OSRM; prefers routes avoiding visible flood layers).</div>
     <div id="rescueInfo" class="small" style="margin-top:8px"></div>
   </div>
 
   <div class="divider"></div>
   <div class="legend">
     <span class="sw"></span><small>Edges</small>
-    <span class="sw pink"></span><small>Flooded edges (unavailable)</small>
     <span class="sw r1"></span><small>Rescue → Fire</small>
     <span class="sw r2"></span><small>Fire → Medical</small>
     <span class="sw fire"></span><small>Fire stations</small>
@@ -114,7 +115,7 @@ const MED_URL     = 'https://dstroder-digital.github.io/Network/data/app/medical
 const NFHL_URL    = 'https://dstroder-digital.github.io/Network/data/app/nfhl_dissolved.geojson';
 const FUTURE_URL  = 'https://dstroder-digital.github.io/Network/data/app/future_flood_dissolved.geojson';
 const METRICS_URL = 'https://dstroder-digital.github.io/Network/data/app/edge_metrics.json'; // JSON export from parquet
-const JSON_ID_FIELD = 'eid';
+const JSON_ID_FIELD = 'eid'; // your JSON shows 'eid' in screenshot
 
 /* -------- Routing (OSRM): change to your own server for production -------- */
 const OSRM_BASE = 'https://router.project-osrm.org';
@@ -161,28 +162,19 @@ tiles.getMetadata().then(meta=>{
 }).catch(()=>{});
 
 /* -------- Build core layers -------- */
-let fireFC=null, medFC=null, nfhlFC=null, futureFC=null, metricMap=null, weightMap=new Map();
+let fireFC=null, medFC=null, nfhlFC=null, futureFC=null, metricMap=null;
 let colorMode='metric'; // 'metric' | 'weight'
-let _prevFlooded = new Set();
 
 map.on('load', async ()=>{
   // edges
   map.addSource('edges',{type:'vector',url:PMTILES_URL});
   map.addLayer({id:'edges-line',type:'line',source:'edges','source-layer':SOURCE_LAYER,
     layout:{'line-cap':'round','line-join':'round'},
-    paint:{'line-color':'#29adff','line-opacity':0.95,'line-width':['interpolate',['linear'],['zoom'], 8,0.6, 12,1.3, 15,2.2]}
-  });
-
-  // *** flooded edges overlay (pink) — sits above base edges ***
-  map.addLayer({
-    id:'edges-flooded', type:'line', source:'edges','source-layer':SOURCE_LAYER,
-    layout:{'line-cap':'round','line-join':'round'},
     paint:{
-      'line-color':'#ff6bb5',
-      'line-opacity':0.9,
+      'line-color':'#29adff', /* overridden by color mode */
+      'line-opacity':0.95,
       'line-width':['interpolate',['linear'],['zoom'], 8,0.6, 12,1.3, 15,2.2]
-    },
-    filter:['==',['feature-state','f'],1]
+    }
   });
 
   // one-way arrows
@@ -206,13 +198,14 @@ map.on('load', async ()=>{
     map.addLayer({id:'nodes',type:'circle',source:'nodes',
       paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,1.0,12,1.8,15,2.4],
              'circle-color':'#f4a261','circle-opacity':0.35,'circle-stroke-color':'#111','circle-stroke-width':0.5}});
+    console.log('Nodes loaded:', nodes.features?.length ?? 0);
   }catch(err){ console.warn('Nodes failed:', err); }
 
   await addPOIs();
   await loadFloods();
-  await loadMetrics();
-  setColorMode('metric');
-  addRescueGraphics();
+  await loadMetrics();      // enables metric coloring
+  setColorMode('metric');   // start with ebetweenness
+  addRescueGraphics();      // routes & point layers
   wireUI();
 });
 
@@ -220,31 +213,37 @@ map.on('load', async ()=>{
 async function addPOIs(){
   try{
     fireFC = await (await fetch(FIRE_URL)).json();
+    console.log('Fire stations:', fireFC.features?.length ?? 0);
     map.addSource('fire',{type:'geojson',data:fireFC});
+    // icon layer (if icon loaded)
     map.addLayer({id:'fire-ic',type:'symbol',source:'fire',layout:{
       'icon-image':'firetruck','icon-size':['interpolate',['linear'],['zoom'],8,0.7,12,0.9,15,1.05],
       'icon-allow-overlap':true,'text-field':['coalesce',['get','name'],'Fire station'],
       'text-font':['Open Sans Semibold','Arial Unicode MS Bold'],'text-size':11,'text-offset':[0,1.1],
-      'text-anchor':'top','visibility': 'visible'
+      'text-anchor':'top','visibility': iconOk.fire?'visible':'none'
     },paint:{'text-halo-color':'#000','text-halo-width':1.2}});
+    // circle fallback (always visible; mostly redundant when icons present)
     map.addLayer({id:'fire-pt',type:'circle',source:'fire',
       paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,3,12,4.5,15,6],
-             'circle-color':'#ff8a00','circle-stroke-color':'#111','circle-stroke-width':1,'circle-opacity':0.6}});
+             'circle-color':'#ff8a00','circle-stroke-color':'#111','circle-stroke-width':1,
+             'circle-opacity': iconOk.fire?0.3:0.9 }});
   }catch(err){ console.warn('Fire stations failed:', err); }
 
   try{
     const medAll = await (await fetch(MED_URL)).json();
     medFC = {type:'FeatureCollection',features:(medAll.features||[]).filter(f=>(f.properties?.name||'').trim().length>0)};
+    console.log('Medical facilities (named):', medFC.features?.length ?? 0);
     map.addSource('med',{type:'geojson',data:medFC});
     map.addLayer({id:'med-ic',type:'symbol',source:'med',layout:{
       'icon-image':'medicon','icon-size':['interpolate',['linear'],['zoom'],8,0.7,12,0.9,15,1.05],
       'icon-allow-overlap':true,'text-field':['get','name'],
       'text-font':['Open Sans Semibold','Arial Unicode MS Bold'],'text-size':11,'text-offset':[0,1.1],
-      'text-anchor':'top','visibility': 'visible'
+      'text-anchor':'top','visibility': iconOk.med?'visible':'none'
     },paint:{'text-halo-color':'#000','text-halo-width':1.2}});
     map.addLayer({id:'med-pt',type:'circle',source:'med',
       paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,3,12,4.5,15,6],
-             'circle-color':'#e76f51','circle-stroke-color':'#111','circle-stroke-width':1,'circle-opacity':0.6}});
+             'circle-color':'#e76f51','circle-stroke-color':'#111','circle-stroke-width':1,
+             'circle-opacity': iconOk.med?0.3:0.9 }});
   }catch(err){ console.warn('Medical facilities failed:', err); }
 }
 
@@ -260,29 +259,32 @@ async function loadFloods(){
          paint:{'fill-color':'#22d3ee','fill-opacity':0.35,'fill-outline-color':'#06b6d4'}});}catch(err){ console.warn('Future flood failed:', err); }
 }
 
-/* -------- Metrics (ebetweenness + weights for coloring modes) -------- */
+/* -------- Metrics (ebetweenness) -------- */
 async function loadMetrics(){
   try{
     const arr = await (await fetch(METRICS_URL,{mode:'cors'})).json(); // [{eid, ebetweenness, weight, ...}]
     metricMap = new Map(arr.map(o => [ String(o[JSON_ID_FIELD]), +o.ebetweenness ]));
-    weightMap = new Map(arr.map(o => [ String(o[JSON_ID_FIELD]), +o.weight ]));
-    // attach metric+weight state on render (viewport join)
+    // store weights too for weight mode
+    weightMap  = new Map(arr.map(o => [ String(o[JSON_ID_FIELD]), +o.weight ]));
+    console.log('Metrics loaded:', metricMap.size, 'weights:', weightMap.size);
+
+    // attach metric state on render (viewport join)
     map.on('render', throttle(()=>{
       const bbox=[[0,0],[map.getCanvas().width, map.getCanvas().height]];
       const feats=map.queryRenderedFeatures(bbox,{layers:['edges-line']});
       for(const f of feats){
         const eid = f.properties?.eid ?? f.properties?.id;
-        if (f.id == null) continue;
-        map.setFeatureState(
-          {source:'edges',sourceLayer:SOURCE_LAYER,id:f.id},
-          { m: metricMap.get(String(eid)) ?? null, w: weightMap.get(String(eid)) ?? null }
-        );
+        const m = metricMap.get(String(eid));
+        const w = weightMap.get(String(eid));
+        // stash both in feature-state; used by color mode
+        map.setFeatureState({source:'edges',sourceLayer:SOURCE_LAYER,id:f.id},{m: (typeof m==='number'?m:null), w: (typeof w==='number'?w:null)});
       }
     }, 400));
   }catch(err){
-    console.warn('Metrics JSON not loaded — edges stay solid / weight mode limited.', err);
+    console.warn('Metrics JSON not loaded — edges will stay solid or weight mode limited.', err);
   }
 }
+let weightMap = new Map();
 
 /* -------- Color modes -------- */
 function setColorMode(mode){
@@ -296,7 +298,7 @@ function setColorMode(mode){
         0,'#264653', 0.33,'#2a9d8f', 0.66,'#e9c46a', 1,'#f4a261'
       ]);
   }else{
-    // Normalize weight ~[0..300]; map to palette
+    // Normalize weight approx: clip to [0, 300] then map
     map.setPaintProperty('edges-line','line-color',
       ['interpolate',['linear'],
         ['min',300, ['max',0, ['coalesce',['feature-state','w'], ['to-number',['get','weight'],0] ] ] ],
@@ -309,7 +311,7 @@ function wireUI(){
   document.getElementById('colorWeight').onclick=()=>setColorMode('weight');
 }
 
-/* -------- Rescue routing + flooded-edge marking -------- */
+/* -------- Rescue routing pipeline -------- */
 function addRescueGraphics(){
   map.addSource('rescue_pt',{type:'geojson',data:turf.featureCollection([])});
   map.addLayer({id:'rescue_pt',type:'circle',source:'rescue_pt',paint:{'circle-radius':6,'circle-color':'#ffffff','circle-stroke-color':'#111','circle-stroke-width':1}});
@@ -320,33 +322,30 @@ function addRescueGraphics(){
 }
 
 const rescueInfo=document.getElementById('rescueInfo');
+let rescuePt=null;
 
 map.on('click', async (e)=>{
   // clicking an edge shows table; clicking empty sets rescue point
   const feats = map.queryRenderedFeatures(e.point,{layers:['edges-line']});
   if (feats.length){ lastProps=feats[0].properties||{}; lastPinned=true; propsEl.innerHTML=renderTable(cleanProps(lastProps)); return; }
 
-  const rescuePt=[e.lngLat.lng,e.lngLat.lat];
+  rescuePt=[e.lngLat.lng,e.lngLat.lat];
   map.getSource('rescue_pt').setData(turf.featureCollection([turf.point(rescuePt)]));
 
-  // polygons to avoid (based on visible overlays)
-  const avoidPolys = (map.getLayoutProperty('nfhl','visibility')==='visible' ? (nfhlFC?.features||[]) : [])
-    .concat(map.getLayoutProperty('future','visibility')==='visible' ? (futureFC?.features||[]) : []);
+  const avoidPolys = (map.getLayoutProperty('nfhl','visibility')==='visible' || map.getLayoutProperty('future','visibility')==='visible')
+    ? [...(nfhlFC?.features||[]), ...(futureFC?.features||[])] : [];
 
-  // choose facilities (prefer outside flood)
+  // choose fire → then medical (prefer outside visible flood)
   const fireChoice = pickFacility(rescuePt, fireFC, avoidPolys);
   const fireCoord = fireChoice?.feature?.geometry?.coordinates;
   const medChoice = fireCoord ? pickFacility(fireCoord, medFC, avoidPolys) : null;
 
-  // route OSRM (minimize flooded overlap)
+  // route with OSRM (minimize flooded overlap)
   const A = fireChoice?.feature ? await routeOSRM(rescuePt, fireChoice.feature.geometry.coordinates, avoidPolys) : null;
   const B = (fireCoord && medChoice?.feature) ? await routeOSRM(fireCoord, medChoice.feature.geometry.coordinates, avoidPolys) : null;
 
   map.getSource('route_fire').setData(A? turf.featureCollection([A.geom]) : turf.featureCollection([]));
   map.getSource('route_med').setData(B? turf.featureCollection([B.geom]) : turf.featureCollection([]));
-
-  // *** mark flooded edges in view, pink ***
-  await markFloodedEdges(avoidPolys);
 
   const reasonA = A ? A.reason : 'no route found';
   const reasonB = B ? B.reason : 'no route found';
@@ -358,37 +357,10 @@ map.on('click', async (e)=>{
     `<b>Fire → Medical:</b> ${esc(nameB)} — ${B?B.dist.toFixed(2)+' mi, '+Math.round(B.eta)+' min':'n/a'} (reason: ${reasonB}).`;
 });
 
-// highlight visible edges inside flood polygons (pink)
-async function markFloodedEdges(polys){
-  // clear previous flags
-  for (const key of _prevFlooded) {
-    try{
-      const [src,srcLayer,id]=key.split('|');
-      map.setFeatureState({source:src,sourceLayer:srcLayer,id:+id},{f:0});
-    }catch{}
-  }
-  _prevFlooded.clear();
-
-  if(!polys || !polys.length) return;
-
-  const bbox=[[0,0],[map.getCanvas().width, map.getCanvas().height]];
-  const feats=map.queryRenderedFeatures(bbox,{layers:['edges-line']});
-  for(const f of feats){
-    if(f.id==null) continue;
-    const coords=f.geometry?.coordinates; if(!coords || coords.length<2) continue;
-    const mid=turf.midpoint(coords[0], coords[coords.length-1]); // fast proxy
-    const inside = polys.some(poly=>turf.booleanPointInPolygon(mid, poly));
-    if(inside){
-      map.setFeatureState({source:'edges',sourceLayer:SOURCE_LAYER,id:f.id},{f:1});
-      _prevFlooded.add(`edges|${SOURCE_LAYER}|${f.id}`);
-    }
-  }
-}
-
-/* -------- Facility choice -------- */
 function pickFacility(originLngLat, fc, floodPolys){
   if(!fc?.features?.length) return null;
-  const p0=turf.point(originLngLat), avoid = floodPolys.length>0;
+  const p0=turf.point(originLngLat);
+  const avoid = floodPolys.length>0;
   let best=null, bestD=Infinity, filtered=0;
   for(const f of fc.features){
     const p=f.geometry?.coordinates; if(!p) continue;
@@ -406,7 +378,6 @@ function pickFacility(originLngLat, fc, floodPolys){
   return {feature:best, explain: avoid ? (filtered>0 ? 'nearest outside flood polygons' : 'nearest (no facilities in flood)') : 'nearest by distance'};
 }
 
-/* -------- OSRM routing with flooded-overlap scoring -------- */
 async function routeOSRM(a,b,floodPolys){
   try{
     const url = `${OSRM_BASE}/route/v1/driving/${a[0]},${a[1]};${b[0]},${b[1]}?overview=full&geometries=geojson&alternatives=true&steps=false`;
@@ -424,8 +395,7 @@ async function routeOSRM(a,b,floodPolys){
       let total=0;
       const segs = turf.segmentReduce(line,(acc,cur)=>{ acc.push(cur); return acc; },[]);
       for(const s of segs){
-        const mid=turf.midpoint(s.geometry.coordinates[0], s.geometry.coordinates[1]);
-        if(floodPolys.some(poly=>turf.booleanPointInPolygon(mid, poly))){
+        if(floodPolys.some(poly=>turf.booleanWithin(turf.midpoint(s.geometry.coordinates[0],s.geometry.coordinates[1]), poly))){
           total += turf.length(s,{units:'miles'});
         }
       }
@@ -433,25 +403,19 @@ async function routeOSRM(a,b,floodPolys){
     }
     let best=routes[0], score=floodOverlap(routes[0].geom);
     for(let i=1;i<routes.length;i++){ const s=floodOverlap(routes[i].geom); if(s<score){best=routes[i]; score=s;} }
-    best.reason = (floodPolys.length? (score>0?'minimized flooded overlap':'avoided flooded areas') : 'shortest-time by OSRM');
+    best.reason = (floodPolys.length? (score>0?'minimized flooded overlap':'avoided flooded areas') : 'shortest-time from OSRM');
     return best;
   }catch(err){ console.warn('OSRM route failed:', err); return null; }
 }
 
-/* -------- UI: Flood overlay toggles also refresh pink edges -------- */
-document.getElementById('toggleNFHL').addEventListener('click', async e=>{
+/* -------- UI -------- */
+document.getElementById('toggleNFHL').addEventListener('click', e=>{
   e.currentTarget.classList.toggle('active');
   map.setLayoutProperty('nfhl','visibility', e.currentTarget.classList.contains('active')?'visible':'none');
-  const polys = (map.getLayoutProperty('nfhl','visibility')==='visible' ? (nfhlFC?.features||[]) : [])
-    .concat(map.getLayoutProperty('future','visibility')==='visible' ? (futureFC?.features||[]) : []);
-  await markFloodedEdges(polys);
 });
-document.getElementById('toggleFuture').addEventListener('click', async e=>{
+document.getElementById('toggleFuture').addEventListener('click', e=>{
   e.currentTarget.classList.toggle('active');
   map.setLayoutProperty('future','visibility', e.currentTarget.classList.contains('active')?'visible':'none');
-  const polys = (map.getLayoutProperty('nfhl','visibility')==='visible' ? (nfhlFC?.features||[]) : [])
-    .concat(map.getLayoutProperty('future','visibility')==='visible' ? (futureFC?.features||[]) : []);
-  await markFloodedEdges(polys);
 });
 document.getElementById('floodOpacity').addEventListener('input', e=>{
   const v=+e.target.value; if(map.getLayer('nfhl')) map.setPaintProperty('nfhl','fill-opacity', v);
