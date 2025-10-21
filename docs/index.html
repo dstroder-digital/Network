@@ -17,7 +17,6 @@
       --bg:#0b0b0b; --panel:#111; --text:#e8f0ff; --muted:#a8b3c7; --accent:#29adff; --accent2:#ffcc00;
       --border:rgba(255,255,255,.12);
     }
-    *{box-sizing:border-box}
     html,body{height:100%;margin:0;background:var(--bg);color:var(--text);
       font:14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
     #map{position:absolute;inset:0}
@@ -26,7 +25,7 @@
       padding:10px 12px;border-radius:10px;border:1px solid var(--border);backdrop-filter: blur(4px);
       box-shadow:0 10px 30px rgba(0,0,0,.35)
     }
-    .hud h3{margin:0 0 6px 0;font-size:15px;letter-spacing:.2px}
+    .hud h3{margin:0 0 6px 0;font-size:15px}
     .hud small{color:var(--muted)}
     .panel{
       position:absolute;top:12px;right:12px;z-index:20;width:min(360px,33vw);max-height:calc(100% - 24px);
@@ -35,12 +34,8 @@
     }
     .row{display:grid;grid-template-columns:110px 1fr;align-items:center;gap:10px}
     .row label{color:var(--muted)}
-    .row input[type="range"]{width:100%}
     .btnbar{display:flex;gap:6px;flex-wrap:wrap}
-    .btn{
-      padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:#151515;color:var(--text);
-      cursor:pointer;font-size:13px
-    }
+    .btn{padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:#151515;color:var(--text);cursor:pointer;font-size:13px}
     .btn.active{background:#1c2733;border-color:#2c3a4b;color:#bfe1ff}
     .legend{display:flex;gap:10px;align-items:center}
     .sw{width:22px;height:8px;border-radius:5px;background:var(--accent);display:inline-block}
@@ -53,13 +48,9 @@
     .stat{display:flex;justify-content:space-between;color:var(--muted)}
     a{color:#9ad0ff;text-decoration:none}
     a:hover{text-decoration:underline}
-
-    /* Tooltip */
-    .tip{
-      position:absolute;pointer-events:none;z-index:30;transform:translate(-50%,-120%);
+    .tip{position:absolute;pointer-events:none;z-index:30;transform:translate(-50%,-120%);
       background:#0e1116;color:#fff;padding:6px 8px;border:1px solid var(--border);border-radius:8px;
-      box-shadow:0 10px 30px rgba(0,0,0,.35);white-space:nowrap;font-size:12.5px
-    }
+      box-shadow:0 10px 30px rgba(0,0,0,.35);white-space:nowrap;font-size:12.5px}
     .tip h4{margin:0 0 4px 0;font-size:12.5px;color:#cfe6ff}
     .hidden{display:none}
   </style>
@@ -81,7 +72,6 @@
         <button class="btn" data-basemap="osm">OSM</button>
       </div>
     </div>
-
     <div class="row">
       <label>Color</label>
       <div class="btnbar" id="colorBar">
@@ -90,7 +80,6 @@
         <button class="btn" data-color="class">By class</button>
       </div>
     </div>
-
     <div class="row">
       <label>Min count</label>
       <input id="minCount" type="range" min="0" max="1000" step="1" value="0">
@@ -102,283 +91,212 @@
       <button class="btn" data-preset="100">100+</button>
       <button class="btn" data-preset="250">250+</button>
     </div>
-
     <div class="legend">
       <span class="sw"></span><small>Edges</small>
       <span class="sw gold"></span><small>Weighted highlight</small>
     </div>
-
     <div class="divider"></div>
-
     <div class="stat"><span>Features in view</span><strong id="featCount">—</strong></div>
     <div class="stat"><span>Pinned id</span><strong id="pinnedId">—</strong></div>
-
     <div class="divider"></div>
-
     <div class="props" id="propTable">(click an edge to pin its properties)</div>
   </div>
 
   <div id="tip" class="tip hidden"></div>
 
 <script>
-/*** ------------------------- CONFIG ------------------------- ***/
+(() => {
+  /*** -------- CONFIG -------- ***/
+  // WORKING binary URL (GitHub LFS via media.githubusercontent.com)
+  const PMTILES_URL =
+    'pmtiles://https://drive.google.com/file/d/1IXGoZ7OCHMctTm3u00_XoIzwju_S00-Q/view?usp=sharing';
 
-// 👉 Set this to your working PMTiles URL.
-// Example (GitHub LFS → serves real binary):
-// const PMTILES_URL = 'pmtiles://https://media.githubusercontent.com/media/dstroder-digital/Network/main/docs/data/app/edges.pmtiles';
+  // URL params
+  const params   = new URLSearchParams(location.search);
+  const urlBase  = params.get('basemap');
+  const urlColor = params.get('color');
+  const urlMin   = parseFloat(params.get('min')||'0');
 
-// Example (Google Drive direct link):
-// const PMTILES_URL = 'pmtiles://https://drive.google.com/uc?export=download&id=YOUR_FILE_ID';
+  const state = {
+    basemap: urlBase || 'dark',
+    colorMode: urlColor || 'solid',
+    minCount: Number.isFinite(urlMin) ? urlMin : 0,
+    pinned: null
+  };
 
-const PMTILES_URL = 'pmtiles://https://drive.google.com/file/d/1IXGoZ7OCHMctTm3u00_XoIzwju_S00-Q/view?usp=sharing';
+  /*** -------- PMTiles protocol (guarded) -------- ***/
+  if (!window.__pmtilesProto) {
+    window.__pmtilesProto = new pmtiles.Protocol();
+    maplibregl.addProtocol('pmtiles', window.__pmtilesProto.tile);
+  }
 
-// If your source-layer inside the PMTiles is not "edges", change it:
-const SOURCE_LAYER = 'edges';
+  /*** -------- Map -------- ***/
+  const map = new maplibregl.Map({
+    container: 'map',
+    hash: true,
+    pitchWithRotate: true,
+    dragRotate: true,
+    style: { version: 8, sources: {}, layers: [
+      { id:'background', type:'background', paint:{'background-color':'#0b0b0b'} }
+    ]},
+    center: [-80.8431, 35.2271],
+    zoom: 10
+  });
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch:true }), 'top-right');
+  map.addControl(new maplibregl.ScaleControl({ maxWidth:160, unit:'imperial' }));
 
-// Initial camera (Charlotte)
-const INITIAL_CENTER = [-80.8431, 35.2271];
-const INITIAL_ZOOM   = 10;
-
-// Read URL params
-const params = new URLSearchParams(location.search);
-const urlBase   = params.get('basemap');      // none|dark|osm
-const urlColor  = params.get('color');        // solid|count|class
-const urlMin    = parseFloat(params.get('min')||'0');
-
-/*** ------------------------- MAP SETUP ------------------------- ***/
-
-const protocol = new pmtiles.Protocol();
-maplibregl.addProtocol('pmtiles', protocol.tile);
-
-const map = new maplibregl.Map({
-  container: 'map',
-  hash: true,
-  pitchWithRotate: true,
-  dragRotate: true,
-  style: {
-    version: 8,
-    sources: {},
-    layers: [
-      { id: 'background', type: 'background', paint: {'background-color':'#0b0b0b'} }
+  const colorRamps = {
+    solid: '#29adff',
+    count: [
+      'interpolate',['linear'],['coalesce',['to-number',['get','count']],0],
+      0,'#24496b',10,'#2f6f9b',50,'#3e8ec3',100,'#55b0ec',250,'#9ad0ff',500,'#cfe6ff'
+    ],
+    class: [
+      'match',['downcase',['coalesce',['get','functional_class'],'']],
+      'motorway','#ff7a00','trunk','#ffcc00','primary','#ffd34d','secondary','#66d17a',
+      'tertiary','#8bd7a2','residential','#29adff','service','#b1b8c7','#29adff'
     ]
-  },
-  center: INITIAL_CENTER,
-  zoom: INITIAL_ZOOM
-});
-
-map.addControl(new maplibregl.NavigationControl({ visualizePitch:true }), 'top-right');
-map.addControl(new maplibregl.ScaleControl({ maxWidth: 160, unit: 'imperial' }));
-
-/*** ------------------------- SOURCES & LAYERS ------------------------- ***/
-
-// --- Keep these lines you already have ---
-const protocol = new pmtiles.Protocol();
-maplibregl.addProtocol('pmtiles', protocol.tile);
-
-const tiles = new pmtiles.PMTiles(PMTILES_URL.replace('pmtiles://',''));
-
-// 🔎 Get metadata so we can pick the correct source-layer name
-let SOURCE_LAYER = 'edges'; // default/fallback
-tiles.getMetadata().then(meta => {
-  const names = (meta?.vector_layers || []).map(v => v.id);
-  console.log('[PMTiles] vector_layers:', names);
-  if (names.length && !names.includes(SOURCE_LAYER)) {
-    SOURCE_LAYER = names[0]; // use the first layer if 'edges' doesn't exist
-    console.warn(`[PMTiles] Using source-layer="${SOURCE_LAYER}" from metadata`);
-  }
-}).catch(err => console.error('PMTiles metadata error:', err));
-
-// Build the map
-const map = new maplibregl.Map({ /* ... your same options ... */ });
-
-// Add everything on 'load' (unchanged), but uses dynamic SOURCE_LAYER now
-map.on('load', () => {
-  map.addSource('edges', { type: 'vector', url: PMTILES_URL });
-
-  map.addLayer({
-    id: 'edges-line',
-    type: 'line',
-    source: 'edges',
-    'source-layer': SOURCE_LAYER,
-    layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: linePaint(),
-    filter: ['>=', 0, 0]
+  };
+  const linePaint = () => ({
+    'line-color': colorRamps[state.colorMode] || colorRamps.solid,
+    'line-width': [
+      'interpolate',['linear'],['zoom'],
+      8, ['max',0.3,['*',0.008,['sqrt',['coalesce',['to-number',['get','count']],0]]]],
+      12,['max',1.0,['*',0.02, ['sqrt',['coalesce',['to-number',['get','count']],0]]]],
+      15,['max',2.0,['*',0.04, ['sqrt',['coalesce',['to-number',['get','count']],0]]]]
+    ],
+    'line-opacity': 0.9
   });
+  const filterMin = () => ['>=',['coalesce',['to-number',['get','count']],0], state.minCount];
 
-  map.addLayer({
-    id: 'edges-weighted',
-    type: 'line',
-    source: 'edges',
-    'source-layer': SOURCE_LAYER,
-    layout: { 'line-cap': 'round', 'line-join': 'round' },
-    filter: ['>=', 0, 0],
-    paint: {
-      'line-color': '#ffcc00',
-      'line-opacity': 0.55,
-      'line-width': [
-        'interpolate', ['linear'], ['coalesce', ['to-number', ['get','count']], 0],
-        250, 2.0, 500, 3.0, 1000, 6.0, 5000, 10.0
-      ]
+  // Basemap add/remove
+  function addBasemap(mode){
+    ['osm','darkTiles'].forEach(id=>{
+      try{ if(map.getLayer(id)) map.removeLayer(id);}catch(e){}
+      try{ if(map.getSource(id)) map.removeSource(id);}catch(e){}
+    });
+    if(mode==='none') return;
+    if(mode==='osm'){
+      map.addSource('osm',{ type:'raster', tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize:256, attribution:'© OpenStreetMap' });
+      map.addLayer({ id:'osm', type:'raster', source:'osm', minzoom:0, maxzoom:19 }, 'edges-line');
+    } else {
+      map.addSource('darkTiles',{ type:'raster', tiles:['https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png'], tileSize:256, attribution:'© Stadia Maps, © OpenMapTiles, © OpenStreetMap' });
+      map.addLayer({ id:'darkTiles', type:'raster', source:'darkTiles', minzoom:0, maxzoom:20 }, 'edges-line');
     }
-  });
-
-  // (leave your controls + counters as-is)
-});
-
-
-/*** ------------------------- BASEMAPS ------------------------- ***/
-
-function addBasemap(mode){
-  // Clear any existing basemap sources/layers we manage
-  ['osm','lightTiles','darkTiles'].forEach(id=>{
-    try { if(map.getLayer(id)) map.removeLayer(id); } catch(e){}
-    try { if(map.getSource(id)) map.removeSource(id); } catch(e){}
-  });
-
-  if(mode==='none'){
-    // background already dark
-    return;
   }
 
-  if(mode==='osm'){
-    map.addSource('osm',{ type:'raster', tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize:256, attribution:'© OpenStreetMap' });
-    map.addLayer({ id:'osm', type:'raster', source:'osm', minzoom:0, maxzoom:19 }, 'edges-line');
-  } else if(mode==='dark'){
-    // Light gray lines on dark—simple raster from Stamen toner-lite alternative via Carto CDN is EOL; keep minimal:
-    map.addSource('darkTiles',{ type:'raster', tiles:['https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png'], tileSize:256,
-      attribution:'© Stadia Maps, © OpenMapTiles, © OpenStreetMap' });
-    map.addLayer({ id:'darkTiles', type:'raster', source:'darkTiles', minzoom:0, maxzoom:20 }, 'edges-line');
-  }
-}
+  // Auto-detect source-layer
+  let SOURCE_LAYER = 'edges';
+  const tiles = new pmtiles.PMTiles(PMTILES_URL.replace('pmtiles://',''));
+  tiles.getMetadata().then(meta=>{
+    const names = (meta?.vector_layers||[]).map(v=>v.id);
+    if(names.length && !names.includes(SOURCE_LAYER)){
+      SOURCE_LAYER = names[0];
+      console.warn(`[PMTiles] Using source-layer="${SOURCE_LAYER}" from metadata`, names);
+    } else {
+      console.log('[PMTiles] vector_layers:', names);
+    }
+  }).catch(err=>console.error('PMTiles metadata error:', err));
 
-/*** ------------------------- UI WIRING ------------------------- ***/
+  map.on('load', ()=>{
+    addBasemap(state.basemap);
 
-// Basemap
-document.getElementById('basemapBar').addEventListener('click', (e)=>{
-  const btn = e.target.closest('button'); if(!btn) return;
-  state.basemap = btn.dataset.basemap;
-  [...e.currentTarget.querySelectorAll('.btn')].forEach(b=>b.classList.toggle('active', b===btn));
-  addBasemap(state.basemap);
-  pushUrl();
-});
+    map.addSource('edges', { type:'vector', url: PMTILES_URL });
 
-// Color mode
-document.getElementById('colorBar').addEventListener('click', (e)=>{
-  const btn = e.target.closest('button'); if(!btn) return;
-  state.colorMode = btn.dataset.color;
-  [...e.currentTarget.querySelectorAll('.btn')].forEach(b=>b.classList.toggle('active', b===btn));
-  ['edges-line'].forEach(id=>{
-    if(map.getLayer(id)) map.setPaintProperty(id, 'line-color', colorRamps[state.colorMode] || colorRamps.solid);
-  });
-  pushUrl();
-});
+    map.addLayer({
+      id:'edges-line', type:'line', source:'edges', 'source-layer': SOURCE_LAYER,
+      layout:{'line-cap':'round','line-join':'round'}, paint: linePaint(), filter: filterMin()
+    });
 
-// Min count
-document.getElementById('minCount').addEventListener('input', (e)=>{
-  state.minCount = +e.target.value;
-  applyFilters();
-  updateCountsDebounced();
-  pushUrl();
-});
-document.querySelectorAll('[data-preset]').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    state.minCount = +btn.dataset.preset;
+    map.addLayer({
+      id:'edges-weighted', type:'line', source:'edges', 'source-layer': SOURCE_LAYER,
+      layout:{'line-cap':'round','line-join':'round'},
+      filter:['>=',['coalesce',['to-number',['get','count']],0], Math.max(state.minCount,250)],
+      paint:{'line-color':'#ffcc00','line-opacity':0.55,'line-width':[
+        'interpolate',['linear'],['coalesce',['to-number',['get','count']],0],
+        250,2.0, 500,3.0, 1000,6.0, 5000,10.0
+      ]}
+    });
+
+    // UI wires
     document.getElementById('minCount').value = state.minCount;
-    applyFilters();
+    document.getElementById('basemapBar').addEventListener('click', e=>{
+      const btn = e.target.closest('button'); if(!btn) return;
+      state.basemap = btn.dataset.basemap;
+      [...e.currentTarget.querySelectorAll('.btn')].forEach(b=>b.classList.toggle('active', b===btn));
+      addBasemap(state.basemap); pushUrl();
+    });
+    document.getElementById('colorBar').addEventListener('click', e=>{
+      const btn = e.target.closest('button'); if(!btn) return;
+      state.colorMode = btn.dataset.color;
+      [...e.currentTarget.querySelectorAll('.btn')].forEach(b=>b.classList.toggle('active', b===btn));
+      if(map.getLayer('edges-line')) map.setPaintProperty('edges-line','line-color', colorRamps[state.colorMode]||colorRamps.solid);
+      pushUrl();
+    });
+    document.getElementById('minCount').addEventListener('input', e=>{
+      state.minCount = +e.target.value; applyFilters(); updateCountsDebounced(); pushUrl();
+    });
+    document.querySelectorAll('[data-preset]').forEach(b=>b.addEventListener('click', ()=>{
+      state.minCount = +b.dataset.preset; document.getElementById('minCount').value = state.minCount;
+      applyFilters(); updateCountsDebounced(); pushUrl();
+    }));
+
     updateCountsDebounced();
-    pushUrl();
   });
-});
 
-function applyFilters(){
-  if(map.getLayer('edges-line')) map.setFilter('edges-line', filterMin());
-  if(map.getLayer('edges-weighted')) map.setFilter('edges-weighted',
-    ['>=', ['coalesce', ['to-number', ['get','count']], 0], Math.max(state.minCount, 250)]
-  );
-}
-
-/*** ------------------------- HOVER & PIN ------------------------- ***/
-
-const tipEl = document.getElementById('tip');
-const propEl = document.getElementById('propTable');
-const pinnedEl = document.getElementById('pinnedId');
-
-map.on('mousemove', (e)=>{
-  const features = map.queryRenderedFeatures(e.point, { layers:['edges-line','edges-weighted'] });
-  if(!features.length || state.pinned){ tipEl.classList.add('hidden'); return; }
-
-  const f = features[0];
-  const id = f.id ?? f.properties?.id ?? '';
-  const count = num(f.properties?.count);
-  const road = f.properties?.name || f.properties?.ref || '';
-  tipEl.innerHTML = `
-    <h4>${road ? esc(road) : 'Edge'}</h4>
-    ${id ? `id: <b>${esc(id)}</b><br>`:''}
-    ${count!=null ? `count: <b>${count}</b>`:''}
-  `;
-  tipEl.style.left = e.originalEvent.clientX + 'px';
-  tipEl.style.top  = e.originalEvent.clientY + 'px';
-  tipEl.classList.remove('hidden');
-});
-
-map.on('mouseleave', 'edges-line', ()=>{ if(!state.pinned) tipEl.classList.add('hidden'); });
-map.on('mouseleave', 'edges-weighted', ()=>{ if(!state.pinned) tipEl.classList.add('hidden'); });
-
-map.on('click', (e)=>{
-  const features = map.queryRenderedFeatures(e.point, { layers:['edges-line','edges-weighted'] });
-  if(!features.length){ state.pinned=null; tipEl.classList.add('hidden'); pinnedEl.textContent='—'; propEl.textContent='(click an edge to pin its properties)'; return; }
-  const f = features[0];
-  state.pinned = f;
-  pinnedEl.textContent = f.id ?? f.properties?.id ?? '—';
-  tipEl.classList.add('hidden');
-  // Render table of properties
-  propEl.innerHTML = renderProps(f.properties || {});
-});
-
-/*** ------------------------- VIEW STATS ------------------------- ***/
-
-const featCountEl = document.getElementById('featCount');
-const updateCountsDebounced = debounce(()=>{
-  const bbox = [[0,0],[map.getCanvas().width, map.getCanvas().height]];
-  const feats = map.queryRenderedFeatures(bbox, { layers:['edges-line'] });
-  featCountEl.textContent = feats.length.toLocaleString();
-}, 250);
-
-['moveend','zoomend','dragend','rotateend','pitchend','idle'].forEach(ev=>map.on(ev, updateCountsDebounced));
-
-/*** ------------------------- HELPERS ------------------------- ***/
-
-function esc(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-function num(v){ const n = +v; return Number.isFinite(n) ? n : null; }
-
-function renderProps(obj){
-  const keys = Object.keys(obj).sort();
-  if(!keys.length) return '(no attributes)';
-  let html = '<table>';
-  for(const k of keys){
-    const v = obj[k];
-    html += `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`;
+  function applyFilters(){
+    if(map.getLayer('edges-line')) map.setFilter('edges-line', filterMin());
+    if(map.getLayer('edges-weighted')) map.setFilter('edges-weighted',
+      ['>=',['coalesce',['to-number',['get','count']],0], Math.max(state.minCount,250)]
+    );
   }
-  html += '</table>';
-  return html;
-}
 
-function debounce(fn, wait){
-  let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), wait); };
-}
+  // Hover / pin
+  const tipEl = document.getElementById('tip');
+  const propEl = document.getElementById('propTable');
+  const pinnedEl = document.getElementById('pinnedId');
 
-function pushUrl(){
-  const p = new URLSearchParams(location.search);
-  p.set('basemap', state.basemap);
-  p.set('color', state.colorMode);
-  p.set('min', state.minCount);
-  const url = `${location.pathname}?${p.toString()}${location.hash}`;
-  history.replaceState(null,'',url);
-}
+  map.on('mousemove', e=>{
+    const feats = map.queryRenderedFeatures(e.point, { layers:['edges-line','edges-weighted'] });
+    if(!feats.length || state.pinned){ tipEl.classList.add('hidden'); return; }
+    const f = feats[0];
+    const id = f.id ?? f.properties?.id ?? '';
+    const count = +f.properties?.count;
+    const name = f.properties?.name || f.properties?.ref || 'Edge';
+    tipEl.innerHTML = `<h4>${escapeHtml(name)}</h4>${id?`id: <b>${escapeHtml(id)}</b><br>`:''}${Number.isFinite(count)?`count: <b>${count}</b>`:''}`;
+    tipEl.style.left = e.originalEvent.clientX + 'px';
+    tipEl.style.top  = e.originalEvent.clientY + 'px';
+    tipEl.classList.remove('hidden');
+  });
+  map.on('mouseleave','edges-line',()=>{ if(!state.pinned) tipEl.classList.add('hidden'); });
+  map.on('mouseleave','edges-weighted',()=>{ if(!state.pinned) tipEl.classList.add('hidden'); });
+  map.on('click', e=>{
+    const feats = map.queryRenderedFeatures(e.point, { layers:['edges-line','edges-weighted'] });
+    if(!feats.length){ state.pinned=null; tipEl.classList.add('hidden'); pinnedEl.textContent='—'; propEl.textContent='(click an edge to pin its properties)'; return; }
+    const f = feats[0];
+    state.pinned = f;
+    pinnedEl.textContent = f.id ?? f.properties?.id ?? '—';
+    tipEl.classList.add('hidden');
+    propEl.innerHTML = renderProps(f.properties||{});
+  });
 
-/*** ------------------------- CLEANUP ------------------------- ***/
-window.addEventListener('unload', ()=>{ try{ maplibregl.removeProtocol('pmtiles'); }catch(e){} });
+  // Stats
+  const featCountEl = document.getElementById('featCount');
+  const updateCountsDebounced = debounce(()=>{
+    const bbox = [[0,0],[map.getCanvas().width, map.getCanvas().height]];
+    const feats = map.queryRenderedFeatures(bbox, { layers:['edges-line'] });
+    featCountEl.textContent = feats.length.toLocaleString();
+  }, 250);
+  ['moveend','zoomend','dragend','rotateend','pitchend','idle'].forEach(ev=>map.on(ev, updateCountsDebounced));
 
+  function renderProps(o){ const k=Object.keys(o).sort(); if(!k.length) return '(no attributes)'; let h='<table>'; for(const x of k){ h+=`<tr><td>${escapeHtml(x)}</td><td>${escapeHtml(o[x])}</td></tr>` } return h+'</table>'; }
+  function debounce(fn, wait){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), wait); }; }
+  function escapeHtml(s){ return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+  function pushUrl(){ const p=new URLSearchParams(location.search); p.set('basemap',state.basemap); p.set('color',state.colorMode); p.set('min',state.minCount); history.replaceState(null,'',`${location.pathname}?${p.toString()}${location.hash}`); }
+
+  map.on('error', e=>console.error('Map error:', e && e.error ? e.error : e));
+  window.addEventListener('unload', ()=>{ /* keep protocol installed across reloads */ });
+})();
 </script>
 </body>
 </html>
