@@ -3,141 +3,421 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Network — PMTiles Viewer</title>
+  <title>Primal Network — Interactive Viewer</title>
 
   <!-- MapLibre GL -->
   <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet">
   <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
 
-  <!-- PMTiles (must load BEFORE your script) -->
+  <!-- PMTiles -->
   <script src="https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js"></script>
 
   <style>
-    html, body { height: 100%; margin: 0; }
-    #map { position: absolute; inset: 0; }
-    .hud {
-      position: absolute; top: 12px; left: 12px; z-index: 10;
-      background: rgba(0,0,0,0.6); color: #fff; padding: 8px 10px; border-radius: 8px;
-      font: 14px/1.3 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      box-shadow: 0 6px 20px rgba(0,0,0,.25);
+    :root{
+      --bg:#0b0b0b; --panel:#111; --text:#e8f0ff; --muted:#a8b3c7; --accent:#29adff; --accent2:#ffcc00;
+      --border:rgba(255,255,255,.12);
     }
-    .hud a { color: #9ad0ff; text-decoration: none; }
-    .hud a:hover { text-decoration: underline; }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--text);
+      font:14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    #map{position:absolute;inset:0}
+    .hud{
+      position:absolute;top:12px;left:12px;z-index:20;background:rgba(0,0,0,.55);
+      padding:10px 12px;border-radius:10px;border:1px solid var(--border);backdrop-filter: blur(4px);
+      box-shadow:0 10px 30px rgba(0,0,0,.35)
+    }
+    .hud h3{margin:0 0 6px 0;font-size:15px;letter-spacing:.2px}
+    .hud small{color:var(--muted)}
+    .panel{
+      position:absolute;top:12px;right:12px;z-index:20;width:min(360px,33vw);max-height:calc(100% - 24px);
+      display:flex;flex-direction:column;gap:10px;padding:12px;background:rgba(0,0,0,.55);
+      border:1px solid var(--border);border-radius:12px;backdrop-filter: blur(6px);overflow:auto
+    }
+    .row{display:grid;grid-template-columns:110px 1fr;align-items:center;gap:10px}
+    .row label{color:var(--muted)}
+    .row input[type="range"]{width:100%}
+    .btnbar{display:flex;gap:6px;flex-wrap:wrap}
+    .btn{
+      padding:6px 10px;border:1px solid var(--border);border-radius:999px;background:#151515;color:var(--text);
+      cursor:pointer;font-size:13px
+    }
+    .btn.active{background:#1c2733;border-color:#2c3a4b;color:#bfe1ff}
+    .legend{display:flex;gap:10px;align-items:center}
+    .sw{width:22px;height:8px;border-radius:5px;background:var(--accent);display:inline-block}
+    .sw.gold{background:var(--accent2)}
+    .divider{height:1px;background:var(--border);margin:6px 0}
+    .props{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12.5px}
+    .props table{width:100%;border-collapse:collapse}
+    .props td{padding:4px 0;border-bottom:1px dashed var(--border);vertical-align:top}
+    .props td:first-child{color:var(--muted);padding-right:8px;width:35%}
+    .stat{display:flex;justify-content:space-between;color:var(--muted)}
+    a{color:#9ad0ff;text-decoration:none}
+    a:hover{text-decoration:underline}
+
+    /* Tooltip */
+    .tip{
+      position:absolute;pointer-events:none;z-index:30;transform:translate(-50%,-120%);
+      background:#0e1116;color:#fff;padding:6px 8px;border:1px solid var(--border);border-radius:8px;
+      box-shadow:0 10px 30px rgba(0,0,0,.35);white-space:nowrap;font-size:12.5px
+    }
+    .tip h4{margin:0 0 4px 0;font-size:12.5px;color:#cfe6ff}
+    .hidden{display:none}
   </style>
 </head>
 <body>
   <div id="map"></div>
+
   <div class="hud">
-    <strong>Edges (PMTiles)</strong><br>
-    Pan/zoom to explore. Press <kbd>Alt</kbd> while dragging to rotate.
+    <h3>Primal Network (PMTiles)</h3>
+    <small>Pan/zoom; drag + <kbd>Alt</kbd> to rotate. Hover for details, click to pin.</small>
   </div>
 
-  <script>
-    // ---------- 1) Wire MapLibre to PMTiles ----------
-    // PMTiles exposes a global 'pmtiles' when loaded from the CDN.
-    const protocol = new pmtiles.Protocol();
-    maplibregl.addProtocol('pmtiles', protocol.tile);
+  <div class="panel" id="panel">
+    <div class="row">
+      <label>Basemap</label>
+      <div class="btnbar" id="basemapBar">
+        <button class="btn" data-basemap="none">None</button>
+        <button class="btn active" data-basemap="dark">Dark</button>
+        <button class="btn" data-basemap="osm">OSM</button>
+      </div>
+    </div>
 
-    // Remove protocol on page unload (good hygiene, not strictly required)
-    window.addEventListener('unload', () => {
-      try { maplibregl.removeProtocol('pmtiles'); } catch(e) {}
-    });
+    <div class="row">
+      <label>Color</label>
+      <div class="btnbar" id="colorBar">
+        <button class="btn active" data-color="solid">Solid</button>
+        <button class="btn" data-color="count">By count</button>
+        <button class="btn" data-color="class">By class</button>
+      </div>
+    </div>
 
-    // ---------- 2) Configure your PMTiles URL ----------
-    // If the file lives at: https://dstroder-digital.github.io/Network/data/edges.pmtiles
-    // then keep the URL below as-is. Otherwise, change the path accordingly.
-    // use the standard raw URL (branch name in the 3rd segment)
-    const PMTILES_URL ='pmtiles://https://drive.google.com/file/d/1IXGoZ7OCHMctTm3u00_XoIzwju_S00-Q/view?usp=sharing';
+    <div class="row">
+      <label>Min count</label>
+      <input id="minCount" type="range" min="0" max="1000" step="1" value="0">
+    </div>
+    <div class="btnbar">
+      <button class="btn" data-preset="0">All</button>
+      <button class="btn" data-preset="10">10+</button>
+      <button class="btn" data-preset="50">50+</button>
+      <button class="btn" data-preset="100">100+</button>
+      <button class="btn" data-preset="250">250+</button>
+    </div>
 
-    // ---------- 3) Create the map ----------
-    const map = new maplibregl.Map({
-      container: 'map',
-      hash: true,
-      pitchWithRotate: true,
-      dragRotate: true,
-      style: {
-        version: 8,
-        // Minimal dark background so your data pops
-        layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#0b0b0b' } }],
-        sources: {}
-      },
-      // Set a sane default view; adjust to your city if you like
-      center: [-80.8431, 35.2271], // Charlotte, NC
-      zoom: 10
-    });
+    <div class="legend">
+      <span class="sw"></span><small>Edges</small>
+      <span class="sw gold"></span><small>Weighted highlight</small>
+    </div>
 
-    // ---------- 4) Add your PMTiles vector source + layers ----------
-    map.on('load', () => {
-      // Add the PMTiles vector source
-      map.addSource('edges', {
-        type: 'vector',
-        url: PMTILES_URL
-      });
+    <div class="divider"></div>
 
-      // IMPORTANT: replace 'edges' below with the actual source-layer name inside your PMTiles.
-      // Common names might be 'edges', 'lines', or similar. If unknown, open DevTools -> Network
-      // and check the returned tile JSON, or inspect your tileset metadata.
-      const SOURCE_LAYER = 'edges'; // <-- change if your source-layer is different
+    <div class="stat"><span>Features in view</span><strong id="featCount">—</strong></div>
+    <div class="stat"><span>Pinned id</span><strong id="pinnedId">—</strong></div>
 
-      // Line layer
-      map.addLayer({
-        id: 'edges-line',
-        type: 'line',
-        source: 'edges',
-        'source-layer': SOURCE_LAYER,
-        layout: {
-          'line-join': 'round',
-          'line-cap': 'round',
-          visibility: 'visible'
-        },
-        paint: {
-          'line-color': ['case',
-            ['has', 'color'], ['get', 'color'], // if your tiles carry a 'color' property
-            '#29adff'
-          ],
-          'line-opacity': 0.85,
-          // Thicker lines at higher zooms; tweak as needed
-          'line-width': [
-            'interpolate', ['linear'], ['zoom'],
-            8, 0.6,
-            12, 1.2,
-            14, 2.0,
-            16, 3.5
-          ]
-        }
-      });
+    <div class="divider"></div>
 
-      // Optional: show thicker/highlighted primary roads if you have a 'weight' or 'count' attribute
-      if (!map.getLayer('edges-weighted')) {
-        map.addLayer({
-          id: 'edges-weighted',
-          type: 'line',
-          source: 'edges',
-          'source-layer': SOURCE_LAYER,
-          filter: ['>=', ['coalesce', ['get', 'count'], 0], 1],
-          paint: {
-            'line-color': '#ffcc00',
-            'line-opacity': 0.55,
-            'line-width': [
-              'interpolate', ['linear'], ['coalesce', ['get', 'count'], 0],
-              0, 0.0,
-              10, 1.0,
-              100, 3.0,
-              1000, 6.0
-            ]
-          }
-        });
-      }
+    <div class="props" id="propTable">(click an edge to pin its properties)</div>
+  </div>
 
-      // Navigation controls
-      map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
-      map.addControl(new maplibregl.ScaleControl({ maxWidth: 160, unit: 'imperial' }));
-    });
+  <div id="tip" class="tip hidden"></div>
 
-    // ---------- 5) Basic runtime checks ----------
-    map.on('error', (e) => {
-      console.error('Map error:', e && e.error ? e.error : e);
-    });
-  </script>
+<script>
+/*** ------------------------- CONFIG ------------------------- ***/
+
+// 👉 Set this to your working PMTiles URL.
+// Example (GitHub LFS → serves real binary):
+// const PMTILES_URL = 'pmtiles://https://media.githubusercontent.com/media/dstroder-digital/Network/main/docs/data/app/edges.pmtiles';
+
+// Example (Google Drive direct link):
+// const PMTILES_URL = 'pmtiles://https://drive.google.com/uc?export=download&id=YOUR_FILE_ID';
+
+const PMTILES_URL = 'pmtiles://https://drive.google.com/file/d/1IXGoZ7OCHMctTm3u00_XoIzwju_S00-Q/view?usp=sharing';
+
+// If your source-layer inside the PMTiles is not "edges", change it:
+const SOURCE_LAYER = 'edges';
+
+// Initial camera (Charlotte)
+const INITIAL_CENTER = [-80.8431, 35.2271];
+const INITIAL_ZOOM   = 10;
+
+// Read URL params
+const params = new URLSearchParams(location.search);
+const urlBase   = params.get('basemap');      // none|dark|osm
+const urlColor  = params.get('color');        // solid|count|class
+const urlMin    = parseFloat(params.get('min')||'0');
+
+/*** ------------------------- MAP SETUP ------------------------- ***/
+
+const protocol = new pmtiles.Protocol();
+maplibregl.addProtocol('pmtiles', protocol.tile);
+
+const map = new maplibregl.Map({
+  container: 'map',
+  hash: true,
+  pitchWithRotate: true,
+  dragRotate: true,
+  style: {
+    version: 8,
+    sources: {},
+    layers: [
+      { id: 'background', type: 'background', paint: {'background-color':'#0b0b0b'} }
+    ]
+  },
+  center: INITIAL_CENTER,
+  zoom: INITIAL_ZOOM
+});
+
+map.addControl(new maplibregl.NavigationControl({ visualizePitch:true }), 'top-right');
+map.addControl(new maplibregl.ScaleControl({ maxWidth: 160, unit: 'imperial' }));
+
+/*** ------------------------- SOURCES & LAYERS ------------------------- ***/
+
+const state = {
+  basemap: urlBase || 'dark',
+  colorMode: urlColor || 'solid',
+  minCount: isFinite(urlMin) ? urlMin : 0,
+  pinned: null
+};
+
+const colorRamps = {
+  solid: '#29adff',
+  // Blue ramp by 'count'
+  count: [
+    'interpolate', ['linear'], ['coalesce', ['to-number', ['get','count']], 0],
+    0,   '#24496b',
+    10,  '#2f6f9b',
+    50,  '#3e8ec3',
+    100, '#55b0ec',
+    250, '#9ad0ff',
+    500, '#cfe6ff'
+  ],
+  // Categorical by functional class (fallback to blue)
+  class: [
+    'match',
+    ['downcase', ['coalesce', ['get','functional_class'], '']],
+    'motorway', '#ff7a00',
+    'trunk',    '#ffcc00',
+    'primary',  '#ffd34d',
+    'secondary','#66d17a',
+    'tertiary', '#8bd7a2',
+    'residential','#29adff',
+    'service',  '#b1b8c7',
+    /* other */ '#29adff'
+  ]
+};
+
+function linePaint(){
+  const width = [
+    'interpolate', ['linear'], ['zoom'],
+    8,  ['max', 0.3, ['*', 0.008, ['sqrt', ['coalesce', ['to-number', ['get','count']], 0]]]],
+    12, ['max', 1.0, ['*', 0.02,  ['sqrt', ['coalesce', ['to-number', ['get','count']], 0]]]],
+    15, ['max', 2.0, ['*', 0.04,  ['sqrt', ['coalesce', ['to-number', ['get','count']], 0]]]]
+  ];
+  return {
+    'line-color': colorRamps[state.colorMode] || colorRamps.solid,
+    'line-width': width,
+    'line-opacity': 0.9
+  };
+}
+
+function filterMin(){
+  return ['>=', ['coalesce', ['to-number', ['get','count']], 0], state.minCount];
+}
+
+map.on('load', () => {
+  // Vector source from PMTiles
+  map.addSource('edges', { type:'vector', url: PMTILES_URL });
+
+  // Base layers
+  addBasemap(state.basemap);
+
+  // Core network layer
+  map.addLayer({
+    id: 'edges-line',
+    type: 'line',
+    source: 'edges',
+    'source-layer': SOURCE_LAYER,
+    minzoom: 0,
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: linePaint(),
+    filter: filterMin()
+  });
+
+  // Weighted highlight (gold overlay)
+  map.addLayer({
+    id: 'edges-weighted',
+    type: 'line',
+    source: 'edges',
+    'source-layer': SOURCE_LAYER,
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    filter: ['>=', ['coalesce', ['to-number', ['get','count']], 0], Math.max(state.minCount, 250)],
+    paint: {
+      'line-color': '#ffcc00',
+      'line-opacity': 0.55,
+      'line-width': [
+        'interpolate', ['linear'], ['coalesce', ['to-number', ['get','count']], 0],
+        250, 2.0, 500, 3.0, 1000, 6.0, 5000, 10.0
+      ]
+    }
+  });
+
+  // Initial UI sync
+  document.getElementById('minCount').value = state.minCount;
+  updateCountsDebounced();
+});
+
+/*** ------------------------- BASEMAPS ------------------------- ***/
+
+function addBasemap(mode){
+  // Clear any existing basemap sources/layers we manage
+  ['osm','lightTiles','darkTiles'].forEach(id=>{
+    try { if(map.getLayer(id)) map.removeLayer(id); } catch(e){}
+    try { if(map.getSource(id)) map.removeSource(id); } catch(e){}
+  });
+
+  if(mode==='none'){
+    // background already dark
+    return;
+  }
+
+  if(mode==='osm'){
+    map.addSource('osm',{ type:'raster', tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize:256, attribution:'© OpenStreetMap' });
+    map.addLayer({ id:'osm', type:'raster', source:'osm', minzoom:0, maxzoom:19 }, 'edges-line');
+  } else if(mode==='dark'){
+    // Light gray lines on dark—simple raster from Stamen toner-lite alternative via Carto CDN is EOL; keep minimal:
+    map.addSource('darkTiles',{ type:'raster', tiles:['https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png'], tileSize:256,
+      attribution:'© Stadia Maps, © OpenMapTiles, © OpenStreetMap' });
+    map.addLayer({ id:'darkTiles', type:'raster', source:'darkTiles', minzoom:0, maxzoom:20 }, 'edges-line');
+  }
+}
+
+/*** ------------------------- UI WIRING ------------------------- ***/
+
+// Basemap
+document.getElementById('basemapBar').addEventListener('click', (e)=>{
+  const btn = e.target.closest('button'); if(!btn) return;
+  state.basemap = btn.dataset.basemap;
+  [...e.currentTarget.querySelectorAll('.btn')].forEach(b=>b.classList.toggle('active', b===btn));
+  addBasemap(state.basemap);
+  pushUrl();
+});
+
+// Color mode
+document.getElementById('colorBar').addEventListener('click', (e)=>{
+  const btn = e.target.closest('button'); if(!btn) return;
+  state.colorMode = btn.dataset.color;
+  [...e.currentTarget.querySelectorAll('.btn')].forEach(b=>b.classList.toggle('active', b===btn));
+  ['edges-line'].forEach(id=>{
+    if(map.getLayer(id)) map.setPaintProperty(id, 'line-color', colorRamps[state.colorMode] || colorRamps.solid);
+  });
+  pushUrl();
+});
+
+// Min count
+document.getElementById('minCount').addEventListener('input', (e)=>{
+  state.minCount = +e.target.value;
+  applyFilters();
+  updateCountsDebounced();
+  pushUrl();
+});
+document.querySelectorAll('[data-preset]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    state.minCount = +btn.dataset.preset;
+    document.getElementById('minCount').value = state.minCount;
+    applyFilters();
+    updateCountsDebounced();
+    pushUrl();
+  });
+});
+
+function applyFilters(){
+  if(map.getLayer('edges-line')) map.setFilter('edges-line', filterMin());
+  if(map.getLayer('edges-weighted')) map.setFilter('edges-weighted',
+    ['>=', ['coalesce', ['to-number', ['get','count']], 0], Math.max(state.minCount, 250)]
+  );
+}
+
+/*** ------------------------- HOVER & PIN ------------------------- ***/
+
+const tipEl = document.getElementById('tip');
+const propEl = document.getElementById('propTable');
+const pinnedEl = document.getElementById('pinnedId');
+
+map.on('mousemove', (e)=>{
+  const features = map.queryRenderedFeatures(e.point, { layers:['edges-line','edges-weighted'] });
+  if(!features.length || state.pinned){ tipEl.classList.add('hidden'); return; }
+
+  const f = features[0];
+  const id = f.id ?? f.properties?.id ?? '';
+  const count = num(f.properties?.count);
+  const road = f.properties?.name || f.properties?.ref || '';
+  tipEl.innerHTML = `
+    <h4>${road ? esc(road) : 'Edge'}</h4>
+    ${id ? `id: <b>${esc(id)}</b><br>`:''}
+    ${count!=null ? `count: <b>${count}</b>`:''}
+  `;
+  tipEl.style.left = e.originalEvent.clientX + 'px';
+  tipEl.style.top  = e.originalEvent.clientY + 'px';
+  tipEl.classList.remove('hidden');
+});
+
+map.on('mouseleave', 'edges-line', ()=>{ if(!state.pinned) tipEl.classList.add('hidden'); });
+map.on('mouseleave', 'edges-weighted', ()=>{ if(!state.pinned) tipEl.classList.add('hidden'); });
+
+map.on('click', (e)=>{
+  const features = map.queryRenderedFeatures(e.point, { layers:['edges-line','edges-weighted'] });
+  if(!features.length){ state.pinned=null; tipEl.classList.add('hidden'); pinnedEl.textContent='—'; propEl.textContent='(click an edge to pin its properties)'; return; }
+  const f = features[0];
+  state.pinned = f;
+  pinnedEl.textContent = f.id ?? f.properties?.id ?? '—';
+  tipEl.classList.add('hidden');
+  // Render table of properties
+  propEl.innerHTML = renderProps(f.properties || {});
+});
+
+/*** ------------------------- VIEW STATS ------------------------- ***/
+
+const featCountEl = document.getElementById('featCount');
+const updateCountsDebounced = debounce(()=>{
+  const bbox = [[0,0],[map.getCanvas().width, map.getCanvas().height]];
+  const feats = map.queryRenderedFeatures(bbox, { layers:['edges-line'] });
+  featCountEl.textContent = feats.length.toLocaleString();
+}, 250);
+
+['moveend','zoomend','dragend','rotateend','pitchend','idle'].forEach(ev=>map.on(ev, updateCountsDebounced));
+
+/*** ------------------------- HELPERS ------------------------- ***/
+
+function esc(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function num(v){ const n = +v; return Number.isFinite(n) ? n : null; }
+
+function renderProps(obj){
+  const keys = Object.keys(obj).sort();
+  if(!keys.length) return '(no attributes)';
+  let html = '<table>';
+  for(const k of keys){
+    const v = obj[k];
+    html += `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`;
+  }
+  html += '</table>';
+  return html;
+}
+
+function debounce(fn, wait){
+  let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), wait); };
+}
+
+function pushUrl(){
+  const p = new URLSearchParams(location.search);
+  p.set('basemap', state.basemap);
+  p.set('color', state.colorMode);
+  p.set('min', state.minCount);
+  const url = `${location.pathname}?${p.toString()}${location.hash}`;
+  history.replaceState(null,'',url);
+}
+
+/*** ------------------------- CLEANUP ------------------------- ***/
+window.addEventListener('unload', ()=>{ try{ maplibregl.removeProtocol('pmtiles'); }catch(e){} });
+
+</script>
 </body>
 </html>
