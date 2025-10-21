@@ -171,78 +171,40 @@ map.addControl(new maplibregl.ScaleControl({ maxWidth: 160, unit: 'imperial' }))
 
 /*** ------------------------- SOURCES & LAYERS ------------------------- ***/
 
-const state = {
-  basemap: urlBase || 'dark',
-  colorMode: urlColor || 'solid',
-  minCount: isFinite(urlMin) ? urlMin : 0,
-  pinned: null
-};
+// --- Keep these lines you already have ---
+const protocol = new pmtiles.Protocol();
+maplibregl.addProtocol('pmtiles', protocol.tile);
 
-const colorRamps = {
-  solid: '#29adff',
-  // Blue ramp by 'count'
-  count: [
-    'interpolate', ['linear'], ['coalesce', ['to-number', ['get','count']], 0],
-    0,   '#24496b',
-    10,  '#2f6f9b',
-    50,  '#3e8ec3',
-    100, '#55b0ec',
-    250, '#9ad0ff',
-    500, '#cfe6ff'
-  ],
-  // Categorical by functional class (fallback to blue)
-  class: [
-    'match',
-    ['downcase', ['coalesce', ['get','functional_class'], '']],
-    'motorway', '#ff7a00',
-    'trunk',    '#ffcc00',
-    'primary',  '#ffd34d',
-    'secondary','#66d17a',
-    'tertiary', '#8bd7a2',
-    'residential','#29adff',
-    'service',  '#b1b8c7',
-    /* other */ '#29adff'
-  ]
-};
+const tiles = new pmtiles.PMTiles(PMTILES_URL.replace('pmtiles://',''));
 
-function linePaint(){
-  const width = [
-    'interpolate', ['linear'], ['zoom'],
-    8,  ['max', 0.3, ['*', 0.008, ['sqrt', ['coalesce', ['to-number', ['get','count']], 0]]]],
-    12, ['max', 1.0, ['*', 0.02,  ['sqrt', ['coalesce', ['to-number', ['get','count']], 0]]]],
-    15, ['max', 2.0, ['*', 0.04,  ['sqrt', ['coalesce', ['to-number', ['get','count']], 0]]]]
-  ];
-  return {
-    'line-color': colorRamps[state.colorMode] || colorRamps.solid,
-    'line-width': width,
-    'line-opacity': 0.9
-  };
-}
+// 🔎 Get metadata so we can pick the correct source-layer name
+let SOURCE_LAYER = 'edges'; // default/fallback
+tiles.getMetadata().then(meta => {
+  const names = (meta?.vector_layers || []).map(v => v.id);
+  console.log('[PMTiles] vector_layers:', names);
+  if (names.length && !names.includes(SOURCE_LAYER)) {
+    SOURCE_LAYER = names[0]; // use the first layer if 'edges' doesn't exist
+    console.warn(`[PMTiles] Using source-layer="${SOURCE_LAYER}" from metadata`);
+  }
+}).catch(err => console.error('PMTiles metadata error:', err));
 
-function filterMin(){
-  return ['>=', ['coalesce', ['to-number', ['get','count']], 0], state.minCount];
-}
+// Build the map
+const map = new maplibregl.Map({ /* ... your same options ... */ });
 
+// Add everything on 'load' (unchanged), but uses dynamic SOURCE_LAYER now
 map.on('load', () => {
-  // Vector source from PMTiles
-  map.addSource('edges', { type:'vector', url: PMTILES_URL });
+  map.addSource('edges', { type: 'vector', url: PMTILES_URL });
 
-  // Base layers
-  addBasemap(state.basemap);
-
-  // Core network layer
   map.addLayer({
     id: 'edges-line',
     type: 'line',
     source: 'edges',
     'source-layer': SOURCE_LAYER,
-    minzoom: 0,
     layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: linePaint(),
-    filter: filterMin()
+    filter: ['>=', ['coalesce', ['to-number', ['get','count']], 0], state.minCount]
   });
 
-  // Weighted highlight (gold overlay)
   map.addLayer({
     id: 'edges-weighted',
     type: 'line',
@@ -260,10 +222,9 @@ map.on('load', () => {
     }
   });
 
-  // Initial UI sync
-  document.getElementById('minCount').value = state.minCount;
-  updateCountsDebounced();
+  // (leave your controls + counters as-is)
 });
+
 
 /*** ------------------------- BASEMAPS ------------------------- ***/
 
