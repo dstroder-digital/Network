@@ -202,7 +202,7 @@ map.on('load', () => {
     'source-layer': SOURCE_LAYER,
     layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: linePaint(),
-    filter: ['>=', ['coalesce', ['to-number', ['get','count']], 0], state.minCount]
+    filter: ['>=', 0, 0]
   });
 
   map.addLayer({
@@ -211,7 +211,7 @@ map.on('load', () => {
     source: 'edges',
     'source-layer': SOURCE_LAYER,
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    filter: ['>=', ['coalesce', ['to-number', ['get','count']], 0], Math.max(state.minCount, 250)],
+    filter: ['>=', 0, 0],
     paint: {
       'line-color': '#ffcc00',
       'line-opacity': 0.55,
