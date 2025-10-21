@@ -68,7 +68,7 @@ summary{cursor:pointer}
     <div>
       <button class="btn active" id="colorMetric">By ebetweenness</button>
       <button class="btn" id="colorWeight">By weight</button>
-      <span class="small">Routing uses OSRM default car profile (weights affect coloring only unless you run custom OSRM).</span>
+      <span class="small">Routing: OSRM default car profile (weights affect coloring unless you run custom OSRM).</span>
     </div>
   </div>
 
@@ -76,7 +76,7 @@ summary{cursor:pointer}
 
   <div class="details">
     <b>Rescue planner</b>
-    <div class="small">Click map to set a rescue location. We route to the most feasible <b>Fire</b> station, then to the most feasible <b>Medical</b> facility (one step, OSRM). If flood layers are visible, we prefer alternatives with less overlap and mark all flooded streets <b style="color:#ff6bb5">pink</b>.</div>
+    <div class="small">Click map to set a rescue location. We route to the most feasible <b>Fire</b> station, then to the most feasible <b>Medical</b> facility in one step (OSRM). If flood layers are visible, we prefer alternatives with less overlap, and mark all flooded streets <b style="color:#ff6bb5">pink</b>.</div>
     <div id="rescueInfo" class="small" style="margin-top:8px"></div>
   </div>
 
@@ -113,7 +113,7 @@ const FIRE_URL    = 'https://dstroder-digital.github.io/Network/data/app/fire_st
 const MED_URL     = 'https://dstroder-digital.github.io/Network/data/app/medical_facilities.geojson';
 const NFHL_URL    = 'https://dstroder-digital.github.io/Network/data/app/nfhl_dissolved.geojson';
 const FUTURE_URL  = 'https://dstroder-digital.github.io/Network/data/app/future_flood_dissolved.geojson';
-const METRICS_URL = 'https://dstroder-digital.github.io/Network/data/app/edge_metrics.json'; // JSON from parquet
+const METRICS_URL = 'https://dstroder-digital.github.io/Network/data/app/edge_metrics.json'; // JSON export from parquet
 const JSON_ID_FIELD = 'eid';
 
 /* -------- Routing (OSRM): change to your own server for production -------- */
@@ -163,6 +163,7 @@ tiles.getMetadata().then(meta=>{
 /* -------- Build core layers -------- */
 let fireFC=null, medFC=null, nfhlFC=null, futureFC=null, metricMap=null, weightMap=new Map();
 let colorMode='metric'; // 'metric' | 'weight'
+let _prevFlooded = new Set();
 
 map.on('load', async ()=>{
   // edges
@@ -170,6 +171,18 @@ map.on('load', async ()=>{
   map.addLayer({id:'edges-line',type:'line',source:'edges','source-layer':SOURCE_LAYER,
     layout:{'line-cap':'round','line-join':'round'},
     paint:{'line-color':'#29adff','line-opacity':0.95,'line-width':['interpolate',['linear'],['zoom'], 8,0.6, 12,1.3, 15,2.2]}
+  });
+
+  // *** flooded edges overlay (pink) — sits above base edges ***
+  map.addLayer({
+    id:'edges-flooded', type:'line', source:'edges','source-layer':SOURCE_LAYER,
+    layout:{'line-cap':'round','line-join':'round'},
+    paint:{
+      'line-color':'#ff6bb5',
+      'line-opacity':0.9,
+      'line-width':['interpolate',['linear'],['zoom'], 8,0.6, 12,1.3, 15,2.2]
+    },
+    filter:['==',['feature-state','f'],1]
   });
 
   // one-way arrows
@@ -211,8 +224,8 @@ async function addPOIs(){
     map.addLayer({id:'fire-ic',type:'symbol',source:'fire',layout:{
       'icon-image':'firetruck','icon-size':['interpolate',['linear'],['zoom'],8,0.7,12,0.9,15,1.05],
       'icon-allow-overlap':true,'text-field':['coalesce',['get','name'],'Fire station'],
-      'text-font':['Open Sans Semibold','Arial Unicode MS Bold'],'text-size':11,'text-offset':[0,1.1],'text-anchor':'top',
-      'visibility': 'visible'
+      'text-font':['Open Sans Semibold','Arial Unicode MS Bold'],'text-size':11,'text-offset':[0,1.1],
+      'text-anchor':'top','visibility': 'visible'
     },paint:{'text-halo-color':'#000','text-halo-width':1.2}});
     map.addLayer({id:'fire-pt',type:'circle',source:'fire',
       paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,3,12,4.5,15,6],
@@ -226,8 +239,8 @@ async function addPOIs(){
     map.addLayer({id:'med-ic',type:'symbol',source:'med',layout:{
       'icon-image':'medicon','icon-size':['interpolate',['linear'],['zoom'],8,0.7,12,0.9,15,1.05],
       'icon-allow-overlap':true,'text-field':['get','name'],
-      'text-font':['Open Sans Semibold','Arial Unicode MS Bold'],'text-size':11,'text-offset':[0,1.1],'text-anchor':'top',
-      'visibility': 'visible'
+      'text-font':['Open Sans Semibold','Arial Unicode MS Bold'],'text-size':11,'text-offset':[0,1.1],
+      'text-anchor':'top','visibility': 'visible'
     },paint:{'text-halo-color':'#000','text-halo-width':1.2}});
     map.addLayer({id:'med-pt',type:'circle',source:'med',
       paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,3,12,4.5,15,6],
@@ -253,17 +266,17 @@ async function loadMetrics(){
     const arr = await (await fetch(METRICS_URL,{mode:'cors'})).json(); // [{eid, ebetweenness, weight, ...}]
     metricMap = new Map(arr.map(o => [ String(o[JSON_ID_FIELD]), +o.ebetweenness ]));
     weightMap = new Map(arr.map(o => [ String(o[JSON_ID_FIELD]), +o.weight ]));
-    // viewport state join for color modes
+    // attach metric+weight state on render (viewport join)
     map.on('render', throttle(()=>{
       const bbox=[[0,0],[map.getCanvas().width, map.getCanvas().height]];
       const feats=map.queryRenderedFeatures(bbox,{layers:['edges-line']});
       for(const f of feats){
         const eid = f.properties?.eid ?? f.properties?.id;
         if (f.id == null) continue;
-        map.setFeatureState({source:'edges',sourceLayer:SOURCE_LAYER,id:f.id},{
-          m: metricMap.get(String(eid)) ?? null,
-          w: weightMap.get(String(eid)) ?? null
-        });
+        map.setFeatureState(
+          {source:'edges',sourceLayer:SOURCE_LAYER,id:f.id},
+          { m: metricMap.get(String(eid)) ?? null, w: weightMap.get(String(eid)) ?? null }
+        );
       }
     }, 400));
   }catch(err){
@@ -296,7 +309,7 @@ function wireUI(){
   document.getElementById('colorWeight').onclick=()=>setColorMode('weight');
 }
 
-/* -------- Rescue routing -------- */
+/* -------- Rescue routing + flooded-edge marking -------- */
 function addRescueGraphics(){
   map.addSource('rescue_pt',{type:'geojson',data:turf.featureCollection([])});
   map.addLayer({id:'rescue_pt',type:'circle',source:'rescue_pt',paint:{'circle-radius':6,'circle-color':'#ffffff','circle-stroke-color':'#111','circle-stroke-width':1}});
@@ -304,12 +317,6 @@ function addRescueGraphics(){
   map.addLayer({id:'route_fire',type:'line',source:'route_fire',paint:{'line-color':'#ffd34d','line-width':4}});
   map.addSource('route_med',{type:'geojson',data:turf.featureCollection([])});
   map.addLayer({id:'route_med',type:'line',source:'route_med',paint:{'line-color':'#9ae6b4','line-width':4}});
-
-  // flooded edges overlay (GeoJSON fallback)
-  map.addSource('flooded_edges',{type:'geojson',data:turf.featureCollection([])});
-  map.addLayer({id:'flooded_edges',type:'line',source:'flooded_edges',
-    paint:{'line-color':'#ff6bb5','line-width':['interpolate',['linear'],['zoom'],8,0.8,12,1.5,15,3],'line-opacity':0.95}
-  },'edges-line');
 }
 
 const rescueInfo=document.getElementById('rescueInfo');
@@ -338,7 +345,7 @@ map.on('click', async (e)=>{
   map.getSource('route_fire').setData(A? turf.featureCollection([A.geom]) : turf.featureCollection([]));
   map.getSource('route_med').setData(B? turf.featureCollection([B.geom]) : turf.featureCollection([]));
 
-  // build/update pink flooded overlay for visible edges
+  // *** mark flooded edges in view, pink ***
   await markFloodedEdges(avoidPolys);
 
   const reasonA = A ? A.reason : 'no route found';
@@ -351,31 +358,31 @@ map.on('click', async (e)=>{
     `<b>Fire → Medical:</b> ${esc(nameB)} — ${B?B.dist.toFixed(2)+' mi, '+Math.round(B.eta)+' min':'n/a'} (reason: ${reasonB}).`;
 });
 
-/* -------- Pink flooded edges (GeoJSON overlay; no feature-state needed) -------- */
+// highlight visible edges inside flood polygons (pink)
 async function markFloodedEdges(polys){
-  if (!polys || !polys.length) {
-    if (map.getSource('flooded_edges')) map.getSource('flooded_edges').setData(turf.featureCollection([]));
-    return;
+  // clear previous flags
+  for (const key of _prevFlooded) {
+    try{
+      const [src,srcLayer,id]=key.split('|');
+      map.setFeatureState({source:src,sourceLayer:srcLayer,id:+id},{f:0});
+    }catch{}
   }
-  const bbox = [[0,0],[map.getCanvas().width, map.getCanvas().height]];
-  const feats = map.queryRenderedFeatures(bbox, { layers:['edges-line'] });
-  const flooded = [];
-  for (const f of feats) {
-    try {
-      if (!f.geometry) continue;
-      if (f.geometry.type === 'LineString') {
-        const line = turf.lineString(f.geometry.coordinates);
-        if (polys.some(poly => turf.booleanIntersects(line, poly))) flooded.push(line);
-      } else if (f.geometry.type === 'MultiLineString') {
-        for (const coords of f.geometry.coordinates) {
-          const line = turf.lineString(coords);
-          if (polys.some(poly => turf.booleanIntersects(line, poly))) { flooded.push(line); break; }
-        }
-      }
-    } catch {}
+  _prevFlooded.clear();
+
+  if(!polys || !polys.length) return;
+
+  const bbox=[[0,0],[map.getCanvas().width, map.getCanvas().height]];
+  const feats=map.queryRenderedFeatures(bbox,{layers:['edges-line']});
+  for(const f of feats){
+    if(f.id==null) continue;
+    const coords=f.geometry?.coordinates; if(!coords || coords.length<2) continue;
+    const mid=turf.midpoint(coords[0], coords[coords.length-1]); // fast proxy
+    const inside = polys.some(poly=>turf.booleanPointInPolygon(mid, poly));
+    if(inside){
+      map.setFeatureState({source:'edges',sourceLayer:SOURCE_LAYER,id:f.id},{f:1});
+      _prevFlooded.add(`edges|${SOURCE_LAYER}|${f.id}`);
+    }
   }
-  map.getSource('flooded_edges').setData(turf.featureCollection(flooded));
-  console.log(`Flooded edges (pink): ${flooded.length}`);
 }
 
 /* -------- Facility choice -------- */
@@ -417,7 +424,7 @@ async function routeOSRM(a,b,floodPolys){
       let total=0;
       const segs = turf.segmentReduce(line,(acc,cur)=>{ acc.push(cur); return acc; },[]);
       for(const s of segs){
-        const mid=turf.midpoint(s.geometry.coordinates[0],s.geometry.coordinates[1]);
+        const mid=turf.midpoint(s.geometry.coordinates[0], s.geometry.coordinates[1]);
         if(floodPolys.some(poly=>turf.booleanPointInPolygon(mid, poly))){
           total += turf.length(s,{units:'miles'});
         }
