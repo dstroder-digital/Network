@@ -1,245 +1,149 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <title>Charlotte Network Explorer</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <meta charset="utf-8" />
+  <title>Network — PMTiles demo</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- MapLibre GL JS -->
+  <link
+    href="https://unpkg.com/maplibre-gl@3.7.0/dist/maplibre-gl.css"
+    rel="stylesheet"
+  />
+  <script src="https://unpkg.com/maplibre-gl@3.7.0/dist/maplibre-gl.js"></script>
+
+  <!-- PMTiles (registers the pmtiles:// protocol) -->
+  <script src="https://unpkg.com/pmtiles@3.5.0/dist/pmtiles.js"></script>
+
   <style>
-    :root{
-      --bg:#0b0f17;--panel:#0c101c;--text:#e0e6ff;--accent:#8cf;
-      --line1:#7aa2c8;--line2:#3f8fc9;--line3:#0d3b66;
-      --cyan:#00ffff;--mag:#ff00ff;--glow:0 0 40px rgba(0,255,255,.15), inset 0 0 36px rgba(255,0,255,.05);
+    :root {
+      --bg: #0e1116;
+      --fg: #e8eef7;
     }
-    html,body {height:100%;margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,Segoe UI,Roboto,sans-serif}
-    #app {display:grid;grid-template-columns:2fr 1fr;height:100%}
-    #map {position:relative}
-    #panel {border-left:1px solid #243;background:rgba(12,16,28,.9);backdrop-filter:blur(8px);padding:12px;overflow:auto;box-shadow:var(--glow)}
-    h3{margin:6px 0;color:var(--accent);text-shadow:0 0 8px rgba(0,200,255,.5)}
-    .tag{display:inline-block;border:1px solid #2a4a70;border-radius:999px;padding:2px 8px;margin:0 6px 6px 0;color:#bfe}
-    .btn{background:#122034;color:#bfe;border:1px solid #2a4a70;border-radius:8px;padding:6px 10px;cursor:pointer;margin:4px 2px}
-    .btn:hover{background:#1a2c48}
-    .legend{font-size:12px;line-height:1.6;margin-top:6px}
-    .sw{display:inline-block;width:16px;height:3px;margin-right:6px;vertical-align:middle;box-shadow:0 0 8px currentColor}
-    .hudline{height:1px;background:#1b2638;margin:8px 0}
-    /* leaflet tooltip restyle */
-    .leaflet-tooltip{background:rgba(12,16,28,.9);border:1px solid #2a4a70;color:#e0e6ff;box-shadow:0 0 12px rgba(0,255,255,.2)}
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
+        "Apple Color Emoji", "Segoe UI Emoji";
+    }
+    #map {
+      position: absolute;
+      inset: 0;
+    }
+    .panel {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 10;
+      background: rgba(20, 24, 33, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 10px 12px;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+      line-height: 1.35;
+      font-size: 14px;
+    }
+    a { color: #9fd1ff; text-decoration: none; }
+    .legend {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .swatch {
+      width: 20px; height: 3px; background:#ff4444; border-radius:2px;
+    }
   </style>
 </head>
 <body>
-<div id="app">
   <div id="map"></div>
-  <div id="panel">
-    <h3>Charlotte Network</h3>
-    <div id="summary">Loading…</div>
-    <div class="hudline"></div>
-    <div style="margin:6px 0">
-      <button class="btn" id="btnRoutes">Toggle Example Route</button>
-      <button class="btn" id="btnFloods">Toggle Flood Layers</button>
-    </div>
-    <div class="legend">
-      <div><span class="sw" style="color:var(--cyan);background:var(--cyan)"></span>Baseline route</div>
-      <div><span class="sw" style="color:var(--mag);background:var(--mag)"></span>Flooded route</div>
-    </div>
-    <div class="hudline"></div>
-    <div id="details"><b>Hint:</b> hover a street or intersection for details. Click to lock.</div>
-    <div class="hudline"></div>
-    <div id="rstats"></div>
-    <div style="margin-top:8px">
-      <span class="tag">Edge width ≈ latest counts</span>
-      <span class="tag">Arrows = one-way</span>
-      <span class="tag">Flood overlay toggle</span>
-    </div>
+
+  <div class="panel">
+    <div><strong>Edges (PMTiles)</strong></div>
+    <div class="legend"><span class="swatch"></span>edges</div>
   </div>
-</div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/d3@7.9.0/dist/d3.min.js"></script>
-<script>
-(async function(){
-  // ---- data paths (relative to docs/) ----
-  const ROOT = './data/app';
-  const files = {
-    nodes:  `${ROOT}/nodes.geojson`,
-    edges:  `${ROOT}/edges.geojson`,
-    fire:   `${ROOT}/fire_stations.geojson`,
-    med:    `${ROOT}/medical_facilities.geojson`,
-    nfhl:   `${ROOT}/nfhl_dissolved.geojson`,
-    fut:    `${ROOT}/future_flood_dissolved.geojson`,
-    rBase:  `${ROOT}/route_example_baseline.geojson`,
-    rFlood: `${ROOT}/route_example_flooded.geojson`,
-    rStat:  `${ROOT}/route_example_stats.json`
-  };
+  <script>
+    // 1) Register the pmtiles:// protocol so style sources can reference it.
+    const protocol = new pmtiles.Protocol();
+    maplibregl.addProtocol("pmtiles", protocol.tile);
 
-  // ---- map ----
-  const map = L.map('map', { zoomControl:false }).setView([35.2271, -80.8431], 12);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution:'&copy; OSM & CARTO'
-  }).addTo(map);
-  L.control.zoom({ position:"bottomright" }).addTo(map);
+    // 2) Path to your PMTiles file in the repo (pushed via Git LFS).
+    const EDGES_PMTILES = "pmtiles://docs/data/app/edges.pmtiles";
 
-  // ---- svg overlay for edges/intersections (fast hover) ----
-  const svgLayer = L.svg({ clickable:true }).addTo(map);
-  const svg = d3.select(svgLayer._svg).attr("pointer-events","auto");
-  const gEdges = svg.append("g").attr("class","edges");
-  const gNodes = svg.append("g").attr("class","nodes");
-  const gArrows= svg.append("g").attr("class","arrows");
+    // 3) Build a minimal style that uses:
+    //    - a raster OSM basemap
+    //    - your vector tiles from PMTiles as a source
+    const style = {
+      version: 8,
+      glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+      sources: {
+        // Free OSM raster tiles for basemap (be kind to the service!)
+        osm: {
+          type: "raster",
+          tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+          tileSize: 256,
+          attribution:
+            '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        },
+        edges: {
+          type: "vector",
+          url: EDGES_PMTILES // thanks to the protocol above
+        }
+      },
+      layers: [
+        { id: "osm", type: "raster", source: "osm" },
+        {
+          id: "edges-line",
+          type: "line",
+          source: "edges",
+          "source-layer": "edges",     // <-- this must match your tippecanoe --layer
+          paint: {
+            "line-color": "#ff4444",
+            "line-width": [
+              "interpolate", ["linear"], ["zoom"],
+              8, 0.4,
+              12, 1.2,
+              16, 2.0
+            ],
+            "line-opacity": 0.95
+          }
+        }
+      ]
+    };
 
-  // helpers
-  const geoProject = d3.geoPath().projection(d3.geoTransform({
-    point: function(x,y){ const p = map.latLngToLayerPoint([y,x]); this.stream.point(p.x,p.y); }
-  }));
-  function lineWidth(w){ return Math.max(1, Math.min(6, +w || 1)); }
-  function colorByBetQ(q){
-    const v = +q||0;
-    return v<16000? '#7aa2c8' : v<48000? '#3f8fc9' : '#0d3b66';
-  }
-
-  const [edges, nodes] = await Promise.all([
-    fetch(files.edges).then(r=>r.json()),
-    fetch(files.nodes).then(r=>r.json())
-  ]);
-
-  // summary
-  document.getElementById('summary').innerHTML =
-    `Segments: ${edges.features.length.toLocaleString()} &nbsp;|&nbsp; Intersections: ${nodes.features.length.toLocaleString()}`;
-
-  // draw edges
-  function drawEdges(){
-    const sel = gEdges.selectAll("path.edge").data(edges.features, d=>d.properties.eid);
-    sel.enter().append("path")
-      .attr("class","edge")
-      .attr("stroke","#66eeff")
-      .attr("fill","none")
-      .attr("stroke-opacity",0.45)
-      .attr("d", d=>geoProject(d))
-      .attr("stroke-width", d=>lineWidth(d.properties.width))
-      .on("mousemove", (ev,d)=> showStreetDetails(d.properties, ev))
-      .on("click", (ev,d)=> lockDetails(d.properties));
-    sel.attr("d", d=>geoProject(d))
-       .attr("stroke-width", d=>lineWidth(d.properties.width));
-    sel.exit().remove();
-  }
-
-  // draw nodes (intersections)
-  function drawNodes(){
-    const pts = nodes.features.map(f=>{
-      const [x,y]=f.geometry.coordinates; const p=map.latLngToLayerPoint([y,x]);
-      return {x:p.x,y:p.y,deg:f.properties.degree||f.properties.deg||0, clo_q:f.properties.closeness||f.properties.clo_q||0};
+    // 4) Create the map
+    const map = new maplibregl.Map({
+      container: "map",
+      style,
+      center: [-80.843, 35.227], // fallback center (Charlotte)
+      zoom: 9,
+      hash: true
     });
-    const sel = gNodes.selectAll("circle.n").data(pts);
-    sel.enter().append("circle").attr("class","n")
-      .attr("r",2.2).attr("fill","#e0f7ff").attr("opacity",0.9)
-      .attr("cx",d=>d.x).attr("cy",d=>d.y)
-      .on("mousemove",(ev,d)=> showNodeDetails(d))
-      .on("click",(ev,d)=> lockDetails(d));
-    sel.attr("cx",d=>d.x).attr("cy",d=>d.y);
-    sel.exit().remove();
-  }
 
-  // one-way arrows (optional if you provided a per-edge oneway flag)
-  function drawArrows(){
-    const A=6;
-    const arr = edges.features.map(f=>{
-      const g = f.geometry;
-      if (g.type!=='LineString') return null;
-      const c = g.coordinates;
-      if (c.length<2) return null;
-      const mid = c[Math.floor(c.length/2)];
-      const p = map.latLngToLayerPoint([mid[1], mid[0]]);
-      return {x:p.x,y:p.y};
-    }).filter(Boolean);
-    const sel = gArrows.selectAll("polygon.arrow").data(arr);
-    sel.enter().append("polygon").attr("class","arrow")
-      .attr("fill","#9ff").attr("opacity",0.8)
-      .attr("points",d=>`${d.x},${d.y-A} ${d.x+A},${d.y+A} ${d.x-A},${d.y+A}`);
-    sel.attr("points",d=>`${d.x},${d.y-A} ${d.x+A},${d.y+A} ${d.x-A},${d.y+A}`);
-    sel.exit().remove();
-  }
+    map.addControl(new maplibregl.NavigationControl(), "top-right");
 
-  function redraw(){ drawEdges(); drawNodes(); drawArrows(); }
-  map.on("moveend zoomend", redraw);
-  redraw();
-
-  // POIs
-  const fireIcon = L.divIcon({html:"🚒", className:"", iconSize:[22,22], iconAnchor:[11,11]});
-  const hospIcon = L.divIcon({html:"🏥", className:"", iconSize:[22,22], iconAnchor:[11,11]});
-  try {
-    const fire = await (await fetch(files.fire)).json();
-    L.geoJSON(fire, { pointToLayer:(_,latlng)=>L.marker(latlng,{icon:fireIcon}) }).addTo(map);
-  } catch(e){}
-  try {
-    const med  = await (await fetch(files.med)).json();
-    L.geoJSON(med,  { pointToLayer:(_,latlng)=>L.marker(latlng,{icon:hospIcon}) }).addTo(map);
-  } catch(e){}
-
-  // Flood overlays (toggle)
-  let floodLayers=[];
-  function addFloodLayers(){
-    floodLayers.forEach(l=>map.removeLayer(l)); floodLayers=[];
-    Promise.all([
-      fetch(files.nfhl).then(r=>r.ok?r.json():null),
-      fetch(files.fut ).then(r=>r.ok?r.json():null)
-    ]).then(([nfhl,fut])=>{
-      if (nfhl) floodLayers.push(L.geoJSON(nfhl,{style:{color:'#00ffff',weight:1,opacity:.8,fillOpacity:.15}}).addTo(map));
-      if (fut)  floodLayers.push(L.geoJSON(fut, {style:{color:'#ff00ff',weight:1,opacity:.8,fillOpacity:.12}}).addTo(map));
-    });
-  }
-  let floodsOn=false;
-  document.getElementById('btnFloods').onclick=()=>{ floodsOn=!floodsOn; floodsOn?addFloodLayers():floodLayers.forEach(l=>map.removeLayer(l)); };
-
-  // Example routes (toggle)
-  let routeOn=false, routeLayers=[];
-  document.getElementById('btnRoutes').onclick=async ()=>{
-    const rstats = document.getElementById('rstats');
-    if(routeOn){ routeLayers.forEach(l=>map.removeLayer(l)); routeLayers=[]; routeOn=false; rstats.textContent=''; return; }
-    try{
-      const [r0, r1, stats] = await Promise.all([
-        fetch(files.rBase).then(r=>r.json()),
-        fetch(files.rFlood).then(r=>r.json()),
-        fetch(files.rStat).then(r=>r.json()).catch(()=>({}))
-      ]);
-      const l0 = L.geoJSON(r0, { style:{color:'var(--cyan)', weight:4, opacity:.9} }).addTo(map);
-      const l1 = L.geoJSON(r1, { style:{color:'var(--mag)',  weight:4, opacity:.9} }).addTo(map);
-      routeLayers=[l0,l1]; routeOn=true;
-      const grp = L.featureGroup(routeLayers); map.fitBounds(grp.getBounds(), {maxZoom:14});
-      const pad = s => (s==null||!isFinite(s))? '—' : (s/60).toFixed(1)+' min';
-      rstats.innerHTML = `<div><b>Baseline:</b> ${pad(stats.baseline_sec)}</div>
-                          <div><b>Flooded:</b> ${pad(stats.flooded_sec)}</div>
-                          <div><b>Δ Time:</b> ${pad(stats.delta_sec)}</div>`;
-    }catch(e){ rstats.textContent='Route example files not found.'; }
-  };
-
-  // hover + details
-  const details = document.getElementById('details');
-  let locked=false;
-  function showStreetDetails(p, ev){
-    if(locked) return;
-    details.innerHTML = `<b>Street</b><br>
-      Betweenness (q16): ${p.bet_q ?? '—'} &nbsp;|&nbsp; Width: ${(+p.width||0).toFixed(1)}<br>
-      ${p.blocked_future? '⚠ Flood-prone segment' : ''}`;
-    // tooltip near cursor
-    const tt = L.tooltip({permanent:false,direction:'top',opacity:.9})
-      .setLatLng(map.layerPointToLatLng(L.point(ev.offsetX,ev.offsetY)))
-      .setContent('segment: '+(p.eid ?? '—'));
-    map.openTooltip(tt);
-    clearTimeout(showStreetDetails._t); showStreetDetails._t=setTimeout(()=>map.closeTooltip(tt), 600);
-  }
-  function showNodeDetails(p){
-    if(locked) return;
-    details.innerHTML = `<b>Intersection</b><br>Degree: ${p.deg??'—'} &nbsp;|&nbsp; Closeness (q16): ${p.clo_q??'—'}`;
-  }
-  function lockDetails(p){ locked = !locked; }
-
-  // keep SVG aligned
-  function syncSvgSize(){
-    const size = map.getSize();
-    svg.attr("width", size.x).attr("height", size.y);
-  }
-  map.on('resize', syncSvgSize); syncSvgSize();
-
-})();
-</script>
+    // 5) (Nice-to-have) If the PMTiles file contains bounds/center, fly to it.
+    //    pmtiles.js lets us read headers/metadata.
+    (async () => {
+      try {
+        const p = new pmtiles.PMTiles(EDGES_PMTILES.replace("pmtiles://",""));
+        const header = await p.getHeader(); // may include center/zoom/bounds
+        // Prefer center from header if present
+        if (header && Array.isArray(header.center) && header.center.length >= 2) {
+          const [lng, lat, z] = header.center;
+          map.once("load", () => map.easeTo({ center: [lng, lat], zoom: z ?? 10 }));
+        } else if (header && Array.isArray(header.bounds) && header.bounds.length === 4) {
+          const b = header.bounds; // [w,s,e,n]
+          map.once("load", () => map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 40 }));
+        }
+      } catch (e) {
+        // Non-fatal; we still show the map at the fallback center
+        console.warn("Could not read PMTiles header/metadata:", e);
+      }
+    })();
+  </script>
 </body>
 </html>
-
