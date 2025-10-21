@@ -1,130 +1,73 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>Network — PMTiles demo</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <!-- MapLibre GL JS -->
-<!-- MapLibre -->
-<link href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css" rel="stylesheet" />
-<script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Edges (PMTiles)</title>
+    <!-- MapLibre -->
+    <link href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css" rel="stylesheet" />
+    <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
 
-  <!-- PMTiles (registers the pmtiles:// protocol) -->
-  <script src="https://unpkg.com/pmtiles@3.5.0/dist/pmtiles.js"></script>
+    <!-- PMTiles: defines global `window.pmtiles` (NO async/defer) -->
+    <script src="https://unpkg.com/pmtiles@3.5.0/dist/pmtiles.js"></script>
 
-  <style>
-    :root {
-      --bg: #0e1116;
-      --fg: #e8eef7;
-    }
-    html, body {
-      height: 100%;
-      margin: 0;
-      background: var(--bg);
-      color: var(--fg);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
-        "Apple Color Emoji", "Segoe UI Emoji";
-    }
-    #map {
-      position: absolute;
-      inset: 0;
-    }
-    .panel {
-      position: absolute;
-      top: 12px;
-      left: 12px;
-      z-index: 10;
-      background: rgba(20, 24, 33, 0.85);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 10px;
-      padding: 10px 12px;
-      backdrop-filter: blur(6px);
-      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
-      line-height: 1.35;
-      font-size: 14px;
-    }
-    a { color: #9fd1ff; text-decoration: none; }
-    .legend {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      margin-top: 6px;
-    }
-    .swatch {
-      width: 20px; height: 3px; background:#ff4444; border-radius:2px;
-    }
-  </style>
-</head>
-<body>
-  <div id="map"></div>
+    <style>
+      html, body, #map { height: 100%; margin: 0; }
+      body { background: #111; color: #eee; }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
 
-  <div class="panel">
-    <div><strong>Edges (PMTiles)</strong></div>
-    <div class="legend"><span class="swatch"></span>edges</div>
-  </div>
+    <!-- Your app (NO type="module", runs AFTER pmtiles.js) -->
+    <script>
+      // quick sanity check in the console
+      console.log("window.pmtiles is", typeof window.pmtiles);
 
-  <!-- PMTiles (global `pmtiles` object) -->
-<script src="https://unpkg.com/pmtiles@3.5.0/dist/pmtiles.js"></script>
-
-<!-- Your app (NO type="module") -->
-<script>
-  const protocol = new pmtiles.Protocol();
-  maplibregl.addProtocol("pmtiles", protocol.tile);
-
-  const EDGES_PMTILES = "https://dstroder-digital.github.io/Network/docs/data/app/edges.pmtiles";
-
-  const map = new maplibregl.Map({
-    container: "map",
-    style: {
-      version: 8,
-      sources: {
-        osm: {
-          type: "raster",
-          tiles: ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"],
-          tileSize: 256,
-          attribution: "© OpenStreetMap"
-        },
-        edges: {
-          type: "vector",
-          url: `pmtiles://${EDGES_PMTILES}`
-        }
-      },
-      layers: [
-        { id: "osm", type: "raster", source: "osm" },
-        {
-          id: "edges",
-          type: "line",
-          source: "edges",
-          "source-layer": "edges",   // must match the layer name you set in tippecanoe
-          paint: { "line-color": "#ff4d4d", "line-width": 2 }
-        }
-      ]
-    },
-    center: [-80.84, 35.23],
-    zoom: 9
-  });
-
-  map.addControl(new maplibregl.NavigationControl(), "top-right");
-</script>
-    // 5) (Nice-to-have) If the PMTiles file contains bounds/center, fly to it.
-    //    pmtiles.js lets us read headers/metadata.
-    (async () => {
-      try {
-        const p = new pmtiles.PMTiles(EDGES_PMTILES.replace("pmtiles://",""));
-        const header = await p.getHeader(); // may include center/zoom/bounds
-        // Prefer center from header if present
-        if (header && Array.isArray(header.center) && header.center.length >= 2) {
-          const [lng, lat, z] = header.center;
-          map.once("load", () => map.easeTo({ center: [lng, lat], zoom: z ?? 10 }));
-        } else if (header && Array.isArray(header.bounds) && header.bounds.length === 4) {
-          const b = header.bounds; // [w,s,e,n]
-          map.once("load", () => map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 40 }));
-        }
-      } catch (e) {
-        // Non-fatal; we still show the map at the fallback center
-        console.warn("Could not read PMTiles header/metadata:", e);
+      // If this logs "undefined", PMTiles didn't load. See notes below.
+      if (!window.pmtiles) {
+        alert("PMTiles script did not load. Check the Network tab for pmtiles.js");
       }
-    })();
-  </script>
-</body>
+
+      // Add PMTiles protocol
+      const protocol = new pmtiles.Protocol();
+      maplibregl.addProtocol("pmtiles", protocol.tile);
+
+      // Absolute URL to your hosted file on Pages
+      const EDGES_PMTILES = "https://dstroder-digital.github.io/Network/docs/data/app/edges.pmtiles";
+
+      const map = new maplibregl.Map({
+        container: "map",
+        style: {
+          version: 8,
+          sources: {
+            osm: {
+              type: "raster",
+              tiles: ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"],
+              tileSize: 256,
+              attribution: "© OpenStreetMap contributors"
+            },
+            edges: {
+              type: "vector",
+              url: `pmtiles://${EDGES_PMTILES}`
+            }
+          },
+          layers: [
+            { id: "osm", type: "raster", source: "osm" },
+            {
+              id: "edges",
+              type: "line",
+              source: "edges",
+              "source-layer": "edges",     // must match the tippecanoe --layer name
+              paint: { "line-color": "#ff4d4d", "line-width": 2 }
+            }
+          ]
+        },
+        center: [-80.84, 35.23],
+        zoom: 9
+      });
+
+      map.addControl(new maplibregl.NavigationControl(), "top-right");
+    </script>
+  </body>
 </html>
