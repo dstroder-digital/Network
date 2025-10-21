@@ -5,11 +5,9 @@
   <title>Network — PMTiles demo</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <!-- MapLibre GL JS -->
-  <link
-    href="https://unpkg.com/maplibre-gl@3.7.0/dist/maplibre-gl.css"
-    rel="stylesheet"
-  />
-  <script src="https://unpkg.com/maplibre-gl@3.7.0/dist/maplibre-gl.js"></script>
+<!-- MapLibre -->
+<link href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
 
   <!-- PMTiles (registers the pmtiles:// protocol) -->
   <script src="https://unpkg.com/pmtiles@3.5.0/dist/pmtiles.js"></script>
@@ -65,66 +63,49 @@
     <div class="legend"><span class="swatch"></span>edges</div>
   </div>
 
-  <script>
-    // 1) Register the pmtiles:// protocol so style sources can reference it.
-    const protocol = new pmtiles.Protocol();
-    maplibregl.addProtocol("pmtiles", protocol.tile);
+  <!-- PMTiles (global `pmtiles` object) -->
+<script src="https://unpkg.com/pmtiles@3.5.0/dist/pmtiles.js"></script>
 
-    // 2) Path to your PMTiles file in the repo (pushed via Git LFS).
-    const EDGES_PMTILES = "http://localhost:8080/docs/data/app/edges.pmtiles";
+<!-- Your app (NO type="module") -->
+<script>
+  const protocol = new pmtiles.Protocol();
+  maplibregl.addProtocol("pmtiles", protocol.tile);
 
-    // 3) Build a minimal style that uses:
-    //    - a raster OSM basemap
-    //    - your vector tiles from PMTiles as a source
-    const style = {
+  const EDGES_PMTILES = "https://dstroder-digital.github.io/Network/docs/data/app/edges.pmtiles";
+
+  const map = new maplibregl.Map({
+    container: "map",
+    style: {
       version: 8,
-      glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
       sources: {
-        // Free OSM raster tiles for basemap (be kind to the service!)
         osm: {
           type: "raster",
-          tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+          tiles: ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"],
           tileSize: 256,
-          attribution:
-            '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          attribution: "© OpenStreetMap"
         },
         edges: {
           type: "vector",
-          url: EDGES_PMTILES // thanks to the protocol above
+          url: `pmtiles://${EDGES_PMTILES}`
         }
       },
       layers: [
         { id: "osm", type: "raster", source: "osm" },
         {
-          id: "edges-line",
+          id: "edges",
           type: "line",
           source: "edges",
-          "source-layer": "edges",     // <-- this must match your tippecanoe --layer
-          paint: {
-            "line-color": "#ff4444",
-            "line-width": [
-              "interpolate", ["linear"], ["zoom"],
-              8, 0.4,
-              12, 1.2,
-              16, 2.0
-            ],
-            "line-opacity": 0.95
-          }
+          "source-layer": "edges",   // must match the layer name you set in tippecanoe
+          paint: { "line-color": "#ff4d4d", "line-width": 2 }
         }
       ]
-    };
+    },
+    center: [-80.84, 35.23],
+    zoom: 9
+  });
 
-    // 4) Create the map
-    const map = new maplibregl.Map({
-      container: "map",
-      style,
-      center: [-80.843, 35.227], // fallback center (Charlotte)
-      zoom: 9,
-      hash: true
-    });
-
-    map.addControl(new maplibregl.NavigationControl(), "top-right");
-
+  map.addControl(new maplibregl.NavigationControl(), "top-right");
+</script>
     // 5) (Nice-to-have) If the PMTiles file contains bounds/center, fly to it.
     //    pmtiles.js lets us read headers/metadata.
     (async () => {
