@@ -8,7 +8,6 @@
 <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js"></script>
-<!-- Turf for nearest/ETA & flood containment checks -->
 <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 
 <style>
@@ -18,7 +17,7 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/
 #map{position:absolute;inset:0}
 .hud{position:absolute;top:12px;left:12px;z-index:20;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
 .hud h3{margin:0 0 6px 0;font-size:15px} .hud small{color:var(--muted)}
-.panel{position:absolute;top:12px;right:12px;z-index:20;width:min(410px,36vw);max-height:calc(100% - 24px);overflow:auto;
+.panel{position:absolute;top:12px;right:12px;z-index:20;width:min(420px,36vw);max-height:calc(100% - 24px);overflow:auto;
        background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
 .row{display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:center}
 .btnbar{display:flex;flex-wrap:wrap;gap:6px}
@@ -55,20 +54,19 @@ summary{cursor:pointer}
 <div class="panel">
   <div class="row">
     <label>Basemap</label>
-    <div class="btnbar" id="basemapBar">
-      <button class="btn active" data-basemap="dark">Dark</button>
-    </div>
+    <div class="btnbar"><button class="btn active">Dark</button></div>
   </div>
 
   <div class="row">
     <label>Edge color</label>
     <div class="btnbar" id="colorBar">
       <button class="btn active" data-color="solid">Solid</button>
-      <button class="btn" data-color="count">By count</button>
+      <button class="btn" data-color="weight" id="byWeightBtn">By weight</button>
       <button class="btn" data-color="class">By class</button>
       <button class="btn" data-color="metric" id="metricBtn" style="display:none">By metric</button>
     </div>
   </div>
+  <div class="small" id="weightHint" style="margin:-6px 0 6px 0;"></div>
 
   <div class="row" id="metricRow" style="display:none">
     <label>Metric</label>
@@ -81,13 +79,13 @@ summary{cursor:pointer}
     </select>
   </div>
   <div id="metricHint" class="small" style="display:none;margin-top:-6px;margin-bottom:6px;">
-    Metrics file not loaded. Drop <code>docs/data/app/edge_metrics.json</code> to enable color & filters.
+    Metrics file not loaded. Add <code>docs/data/app/edge_metrics.json</code>.
   </div>
 
   <div class="btnbar" style="margin-top:6px">
     <button class="btn" id="toggleWeighted">Weighted edges</button>
     <button class="btn" id="toggleArrows">One-way arrows</button>
-    <button class="btn" id="toggleNodes">Show nodes</button>
+    <button class="btn active" id="toggleNodes">Show nodes</button>
   </div>
 
   <div class="btnbar" style="margin-top:6px">
@@ -116,9 +114,6 @@ summary{cursor:pointer}
       <button class="btn" data-dest="medical" id="destMed">Send to Medical</button>
       <button class="btn" id="clearRescue">Clear</button>
     </div>
-    <div id="rescueNote" class="small" style="margin-top:6px">
-      Picks the nearest facility by road proxy (great-circle × factor). If a flood layer is visible, facilities inside flooded polygons are ignored.
-    </div>
     <div id="rescueInfo" class="small" style="margin-top:6px"></div>
   </div>
 
@@ -146,14 +141,14 @@ summary{cursor:pointer}
 
 <script>
 (() => {
-/* ---------- Data URLs ---------- */
+/* ---------- Data URLs (adjust if needed) ---------- */
 const PMTILES_URL = 'pmtiles://https://media.githubusercontent.com/media/dstroder-digital/Network/main/docs/data/app/edges.pmtiles';
 const NODES_URL   = 'https://dstroder-digital.github.io/Network/data/app/nodes.geojson';
 const FIRE_URL    = 'https://dstroder-digital.github.io/Network/data/app/fire_stations.geojson';
 const MED_URL     = 'https://dstroder-digital.github.io/Network/data/app/medical_facilities.geojson';
 const NFHL_URL    = 'https://dstroder-digital.github.io/Network/data/app/nfhl_dissolved.geojson';
 const FUTURE_URL  = 'https://dstroder-digital.github.io/Network/data/app/future_flood_dissolved.geojson';
-const METRICS_URL = null; // set to './data/app/edge_metrics.json' when available
+const METRICS_URL = null; // e.g. './data/app/edge_metrics.json'
 
 /* ---------- PMTiles protocol (guard) ---------- */
 if (!window.__pmtilesProto) {
@@ -165,139 +160,156 @@ if (!window.__pmtilesProto) {
 const map = new maplibregl.Map({
   container:'map', hash:true, pitchWithRotate:true, dragRotate:true,
   style:{version:8, sources:{}, layers:[{id:'bg',type:'background',paint:{'background-color':'#0b0b0b'}}]},
-  center:[-80.8431,35.2271], zoom:10
+  center:[-80.8431,35.2271], zoom:11
 });
 map.addControl(new maplibregl.NavigationControl({visualizePitch:true}), 'top-right');
 map.addControl(new maplibregl.ScaleControl({maxWidth:160, unit:'imperial'}));
 
+/* ---------- Dark basemap ---------- */
+map.on('load',()=> {
+  map.addSource('dark',{type:'raster',tiles:['https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png'],tileSize:256,attribution:'© Stadia Maps, © OpenMapTiles, © OpenStreetMap'});
+  map.addLayer({id:'dark',type:'raster',source:'dark'}, 'bg');
+});
+
 /* ---------- One-way arrow sprite ---------- */
-const arrowSvg='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="white" opacity="0.75"><path d="M13 5l7 7-7 7v-4H4v-6h9V5z"/></svg>`);
+const arrowSvg='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="white" opacity="0.85"><path d="M13 5l7 7-7 7v-4H4v-6h9V5z"/></svg>`);
 map.on('load',()=>{ map.loadImage(arrowSvg,(e,img)=>{ if(!e) map.addImage('arrow', img,{pixelRatio:2}); }); });
 
-/* ---------- Source-layer autodetect + field list ---------- */
+/* ---------- Source-layer autodetect + fields ---------- */
 let SOURCE_LAYER='edges';
-const fieldsUI = document.getElementById('fieldsList');
+let weightField=null;
+const weightHint=document.getElementById('weightHint');
+const fieldsUI=document.getElementById('fieldsList');
+
 const tiles = new pmtiles.PMTiles(PMTILES_URL.replace('pmtiles://',''));
 tiles.getMetadata().then(meta=>{
   const names=(meta?.vector_layers||[]).map(v=>v.id);
   if(names.length && !names.includes(SOURCE_LAYER)) SOURCE_LAYER=names[0];
-  const attrs = (meta?.tilestats?.layers||[]).find(l=>l.layer===SOURCE_LAYER)?.attributes || [];
+
+  // Show attributes
+  const attrs=(meta?.tilestats?.layers||[]).find(l=>l.layer===SOURCE_LAYER)?.attributes||[];
   if (attrs.length){
-    fieldsUI.innerHTML = attrs.map(a=>`• <code>${a.attribute}</code> <span class="small">(${a.type||'?'})</span>`).join('<br>');
+    fieldsUI.innerHTML=attrs.map(a=>`• <code>${a.attribute}</code> <span class="small">(${a.type||'?'})</span>`).join('<br>');
+  }
+
+  // Pick weight field
+  const pref=['count','weight','edge_weight','aadt','traffic','volume'];
+  const nums=attrs.filter(a=>a.type==='number').map(a=>a.attribute);
+  for (const k of pref){ if(nums.includes(k)) { weightField=k; break; } }
+  if (!weightField && nums.length) weightField=nums[0];
+
+  if (weightField){
+    weightHint.innerHTML=`Weight field: <b><code>${weightField}</code></b>.`;
+  } else {
+    weightHint.innerHTML=`No numeric field found for weighting; weight/“By weight” disabled.`;
+    document.getElementById('byWeightBtn').disabled=true;
   }
 }).catch(()=>{});
 
 /* ---------- Colors ---------- */
-const ramps = {
-  solid:'#29adff',
-  count:['interpolate',['linear'],['coalesce',['to-number',['get','count']],0],
-         0,'#24496b',10,'#2f6f9b',50,'#3e8ec3',100,'#55b0ec',250,'#9ad0ff',500,'#cfe6ff'],
-  class:['match',['downcase',['coalesce',['get','functional_class'],'']],
-         'motorway','#ff7a00','trunk','#ffcc00','primary','#ffd34d','secondary','#66d17a',
-         'tertiary','#8bd7a2','residential','#29adff','service','#b1b8c7','#29adff']
-};
-function edgePaint(mode){
-  const color = mode==='solid'||!ramps[mode] ? ramps.solid : ramps[mode];
-  return {
-    'line-color': color,
-    'line-width':['interpolate',['linear'],['zoom'],
-      8, ['max',0.3,['*',0.008,['sqrt',['coalesce',['to-number',['get','count']],0]]]],
-      12,['max',1.0,['*',0.02,['sqrt',['coalesce',['to-number',['get','count']],0]]]],
-      15,['max',2.0,['*',0.04,['sqrt',['coalesce',['to-number',['get','count']],0]]]]
-    ],
-    'line-opacity':0.95
-  };
+function weightRamp(){
+  return ['interpolate',['linear'],['coalesce',['to-number',['get', weightField||'__none__']],0],
+    0,'#24496b', 5,'#2f6f9b', 20,'#3e8ec3', 50,'#55b0ec', 150,'#9ad0ff', 400,'#cfe6ff'
+  ];
 }
+const classRamp=['match',['downcase',['coalesce',['get','functional_class'],'']],
+  'motorway','#ff7a00','trunk','#ffcc00','primary','#ffd34d','secondary','#66d17a',
+  'tertiary','#8bd7a2','residential','#29adff','service','#b1b8c7','#29adff'
+];
 
-/* ---------- UI state ---------- */
-let colorMode='solid';
-let metrics=null, metricName='betweenness', metricDomain=[0,1];
-let showWeighted=false, showArrows=false;
-let destMode='fire'; // or 'medical'
+/* ---------- Build edges & layers ---------- */
+let colorMode='solid', metrics=null, metricName='betweenness', metricDomain=[0,1];
 
-/* ---------- Build map ---------- */
 map.on('load', async ()=>{
-  // Basemap = dark only
-  map.addSource('dark',{type:'raster',tiles:['https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png'],tileSize:256,attribution:'© Stadia Maps, © OpenMapTiles, © OpenStreetMap'});
-  map.addLayer({id:'dark',type:'raster',source:'dark'}, 'bg');
+  map.addSource('edges',{type:'vector',url:PMTILES_URL});
 
-  // Edges
-  map.addSource('edges', {type:'vector', url: PMTILES_URL});
-  map.addLayer({ id:'edges-line', type:'line', source:'edges', 'source-layer':SOURCE_LAYER,
-    layout:{'line-cap':'round','line-join':'round'}, paint: edgePaint(colorMode)
-  });
-
-  // Weighted overlay (above edges)
-  map.addLayer({ id:'edges-weighted', type:'line', source:'edges','source-layer':SOURCE_LAYER,
-    layout:{'line-cap':'round','line-join':'round','visibility':'none'},
-    paint:{ 'line-color':'#9bf6ff','line-opacity':0.9,
-      'line-width':['interpolate',['linear'],['coalesce',['to-number',['get','count']],0],
-        0,0, 50,2, 100,3.5, 250,6, 500,9, 1000,13]
+  map.addLayer({id:'edges-line',type:'line',source:'edges','source-layer':SOURCE_LAYER,
+    layout:{'line-cap':'round','line-join':'round'},
+    paint:{
+      'line-color':'#29adff',
+      'line-width':['interpolate',['linear'],['zoom'], 8,0.6, 12,1.3, 15,2.2],
+      'line-opacity':0.95
     }
   });
 
-  // One-way arrows (broadened filter to catch varied encodings)
-  map.addLayer({ id:'oneway-arrows', type:'symbol', source:'edges','source-layer':SOURCE_LAYER,
+  // Weighted overlay (uses detected weightField; always visible when toggled)
+  map.addLayer({id:'edges-weighted',type:'line',source:'edges','source-layer':SOURCE_LAYER,
+    layout:{'line-cap':'round','line-join':'round','visibility':'none'},
+    paint:{
+      'line-color': ['case', ['has', weightField||'__none__'], '#9bf6ff', '#9bf6ff'],
+      'line-width':['interpolate',['linear'],['coalesce',['to-number',['get',weightField||'__none__']],0],
+        0,0.0, 5,1.5, 20,3.5, 50,6, 150,9, 400,13],
+      'line-opacity':0.95
+    }
+  });
+
+  // One-way arrows (very broad truthy filter)
+  map.addLayer({id:'oneway-arrows',type:'symbol',source:'edges','source-layer':SOURCE_LAYER,
     layout:{'symbol-placement':'line','symbol-spacing':60,'icon-image':'arrow','icon-size':0.55,'visibility':'none'},
     filter:['any',
       ['==',['downcase',['get','oneway']],'yes'],
       ['==',['downcase',['get','one_way']],'yes'],
-      ['in',['to-string',['get','oneway']],['literal',['1','true','True','Y','Yes']]],
-      ['in',['to-string',['get','is_oneway']],['literal',['1','true','True','Y','Yes']]]
+      ['in',['to-string',['get','oneway']],['literal',['1','true','True','y','Y','Yes']]],
+      ['in',['to-string',['get','is_oneway']],['literal',['1','true','True','y','Y','Yes']]]
     ],
-    paint:{'icon-opacity':0.75}
+    paint:{'icon-opacity':0.85}
   });
 
-  await addOptionalLayers();
+  await addOptionals();
   await maybeLoadMetrics();
   wireUI();
-
-  // If tilestats didn’t include fields, sample one feature to list keys:
-  if (!fieldsUI.innerHTML){
-    const bb=[[0,0],[map.getCanvas().width,map.getCanvas().height]];
-    const f=map.queryRenderedFeatures(bb,{layers:['edges-line']})[0];
-    if (f?.properties){
-      fieldsUI.innerHTML = Object.keys(f.properties).sort().map(k=>`• <code>${k}</code>`).join('<br>');
-    }
-  }
 });
 
-/* ---------- Optional layers ---------- */
-async function addOptionalLayers(){
-  addGeo('nodes',  NODES_URL, {type:'circle', paint:{
-    'circle-radius':['interpolate',['linear'],['zoom'],8,1.2,12,2.2,15,3.2],
-    'circle-color':'#f4a261','circle-opacity':0.85,'circle-stroke-color':'#111','circle-stroke-width':0.5
-  }});
-  addGeo('fire',   FIRE_URL, {type:'circle', paint:{
-    'circle-radius':['interpolate',['linear'],['zoom'],8,2.2,12,3.8,15,5.2],
-    'circle-color':'#f4a261','circle-stroke-color':'#111','circle-stroke-width':0.5
-  }});
-  addGeo('med',    MED_URL,  {type:'circle', paint:{
-    'circle-radius':['interpolate',['linear'],['zoom'],8,2.2,12,3.8,15,5.2],
-    'circle-color':'#e76f51','circle-stroke-color':'#111','circle-stroke-width':0.5
-  }});
-  addGeo('nfhl',   NFHL_URL, {type:'fill',   paint:{'fill-color':'#38bdf8','fill-opacity':0.35,'fill-outline-color':'#0ea5e9'}});
-  addGeo('future', FUTURE_URL,{type:'fill',  paint:{'fill-color':'#22d3ee','fill-opacity':0.35,'fill-outline-color':'#06b6d4'}});
+/* ---------- Optional sources/layers & data copies for rescue ---------- */
+let fireFC=null, medFC=null, nfhlFC=null, futureFC=null;
 
-  // Rescue layers
-  map.addSource('rescue_pt',{type:'geojson',data:{"type":"FeatureCollection","features":[]}});
+async function addOptionals(){
+  // Nodes
+  try{
+    const gj = await (await fetch(NODES_URL)).json();
+    map.addSource('nodes',{type:'geojson',data:gj});
+    map.addLayer({id:'nodes',type:'circle',source:'nodes',
+      layout:{visibility:'visible'},
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,1.2,12,2.2,15,3.2],
+             'circle-color':'#f4a261','circle-opacity':0.85,'circle-stroke-color':'#111','circle-stroke-width':0.5}});
+  }catch(_){ document.getElementById('toggleNodes').disabled=true; }
+
+  // Fire
+  try{
+    fireFC = await (await fetch(FIRE_URL)).json();
+    map.addSource('fire',{type:'geojson',data:fireFC});
+    map.addLayer({id:'fire',type:'circle',source:'fire',layout:{visibility:'none'},
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,2.2,12,3.8,15,5.2],
+             'circle-color':'#f4a261','circle-stroke-color':'#111','circle-stroke-width':0.5}});
+  }catch(_){ document.getElementById('toggleFire').disabled=true; }
+
+  // Medical
+  try{
+    medFC = await (await fetch(MED_URL)).json();
+    map.addSource('med',{type:'geojson',data:medFC});
+    map.addLayer({id:'med',type:'circle',source:'med',layout:{visibility:'none'},
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],8,2.2,12,3.8,15,5.2],
+             'circle-color':'#e76f51','circle-stroke-color':'#111','circle-stroke-width':0.5}});
+  }catch(_){ document.getElementById('toggleMedical').disabled=true; }
+
+  // Floods (keep copies for rescue filter)
+  try{ nfhlFC = await (await fetch(NFHL_URL)).json();
+       map.addSource('nfhl',{type:'geojson',data:nfhlFC});
+       map.addLayer({id:'nfhl',type:'fill',source:'nfhl',layout:{visibility:'none'},
+         paint:{'fill-color':'#38bdf8','fill-opacity':0.35,'fill-outline-color':'#0ea5e9'}}); }catch(_){}
+  try{ futureFC = await (await fetch(FUTURE_URL)).json();
+       map.addSource('future',{type:'geojson',data:futureFC});
+       map.addLayer({id:'future',type:'fill',source:'future',layout:{visibility:'none'},
+         paint:{'fill-color':'#22d3ee','fill-opacity':0.35,'fill-outline-color':'#06b6d4'}}); }catch(_){}
+
+  // Rescue graphics
+  map.addSource('rescue_pt',{type:'geojson',data:turf.featureCollection([])});
   map.addLayer({id:'rescue_pt',type:'circle',source:'rescue_pt',
-    paint:{'circle-radius':6,'circle-color':'#ffffff','circle-stroke-color':'#111','circle-stroke-width':1}, layout:{visibility:'visible'}});
+    paint:{'circle-radius':6,'circle-color':'#fff','circle-stroke-color':'#111','circle-stroke-width':1}});
 
-  map.addSource('rescue_conn',{type:'geojson',data:{"type":"FeatureCollection","features":[]}});
+  map.addSource('rescue_conn',{type:'geojson',data:turf.featureCollection([])});
   map.addLayer({id:'rescue_conn',type:'line',source:'rescue_conn',paint:{'line-color':'#22c55e','line-width':3,'line-dasharray':[2,2]}});
 }
-function addGeo(id, url, layer){
-  try{
-    map.addSource(id,{type:'geojson',data:url});
-    const lyr = Object.assign({id,source:id,layout:{visibility: (id==='nodes'?'visible':'none')}}, layer);
-    map.addLayer(lyr);
-    document.getElementById(btnId(id)).disabled=false;
-  }catch(_){
-    const btn=document.getElementById(btnId(id)); if(btn) btn.disabled=true;
-  }
-}
-function btnId(id){ return ({nodes:'toggleNodes',fire:'toggleFire',med:'toggleMedical',nfhl:'toggleNFHL',future:'toggleFuture'})[id]||'noop'; }
 
 /* ---------- Metrics (optional) ---------- */
 async function maybeLoadMetrics(){
@@ -320,25 +332,29 @@ function setMetricDomain(){
 
 /* ---------- UI wiring ---------- */
 function wireUI(){
-  // only Dark present; basemap button kept inert but styled
-
   const colorBar=document.getElementById('colorBar');
   colorBar.addEventListener('click', e=>{
     const b=e.target.closest('.btn'); if(!b) return;
     colorMode=b.dataset.color; setActive(colorBar,b);
-    if(colorMode==='metric'){
-      document.getElementById('metricRow').style.display = metrics ? '' : 'none';
+
+    if(colorMode==='solid'){
+      map.setPaintProperty('edges-line','line-color','#29adff');
+    }else if(colorMode==='class'){
+      map.setPaintProperty('edges-line','line-color', classRamp);
+    }else if(colorMode==='weight'){
+      if (!weightField){ alert('No numeric field in tiles to use as weight.'); return;}
+      map.setPaintProperty('edges-line','line-color', weightRamp());
+    }else if(colorMode==='metric'){
+      if(!metrics){ alert('Metrics file not loaded.'); return; }
       map.setPaintProperty('edges-line','line-color',
         ['interpolate',['linear'],['coalesce',['feature-state',metricName],['to-number',['get',metricName]],0],
           metricDomain[0],'#264653',(metricDomain[0]+metricDomain[1])/2,'#2a9d8f',metricDomain[1],'#e9c46a']);
-    }else{
-      map.setPaintProperty('edges-line','line-color', (ramps[colorMode]||ramps.solid));
     }
   });
 
   document.getElementById('metricSelect').addEventListener('change', e=>{
     metricName=e.target.value; setMetricDomain();
-    if(colorMode==='metric'){
+    if(colorMode==='metric' && metrics){
       map.setPaintProperty('edges-line','line-color',
         ['interpolate',['linear'],['coalesce',['feature-state',metricName],['to-number',['get',metricName]],0],
           metricDomain[0],'#264653',(metricDomain[0]+metricDomain[1])/2,'#2a9d8f',metricDomain[1],'#e9c46a']);
@@ -367,37 +383,35 @@ function wireUI(){
   });
   document.getElementById('clearRescue').addEventListener('click', clearRescue);
 
-  // Raw toggle
   document.getElementById('toggleRaw').addEventListener('click', e=>{
-    e.preventDefault(); showRaw=!showRaw; if(lastProps) renderProps(lastProps);
+    e.preventDefault(); showRaw=!showRaw; if(lastProps) propsEl.innerHTML=renderTable(cleanProps(lastProps));
   });
 
-  // Click map to set rescue point or pin edge
+  // Click map: pin edge if hit; otherwise set rescue point
   map.on('click', (e)=>{
     const feats = map.queryRenderedFeatures(e.point,{layers:['edges-line','edges-weighted']});
     if (feats.length){
-      lastProps=feats[0].properties||{}; lastPinned=true; propsEl.innerHTML=renderTable(cleanProps(lastProps));
-      return;
+      lastProps=feats[0].properties||{}; lastPinned=true; propsEl.innerHTML=renderTable(cleanProps(lastProps)); return;
     }
-    // else set rescue point
     setRescuePoint([e.lngLat.lng,e.lngLat.lat]);
   });
 
-  // Tooltip on hover
+  // Hover tip
   map.on('mousemove', e=>{
     const f=map.queryRenderedFeatures(e.point,{layers:['edges-line','edges-weighted']})[0];
     if(!f){ if(!lastPinned) tipEl.classList.add('hidden'); return; }
     const nm=f.properties?.name||f.properties?.ref||'Edge';
-    const cnt=+f.properties?.count;
-    tipEl.innerHTML=`<strong>${esc(nm)}</strong>${Number.isFinite(cnt)?` — count: ${cnt}`:''}`;
+    const w = weightField? +f.properties?.[weightField] : null;
+    tipEl.innerHTML=`<strong>${esc(nm)}</strong>${Number.isFinite(w)?` — ${weightField}: ${w}`:''}`;
     tipEl.style.left=e.originalEvent.clientX+'px'; tipEl.style.top=e.originalEvent.clientY+'px';
     tipEl.classList.remove('hidden');
   });
 }
 
 /* ---------- Rescue planning ---------- */
-let rescuePt=null; // [lng,lat]
+let rescuePt=null, destMode='fire';
 const rescueInfo=document.getElementById('rescueInfo');
+
 function setRescuePoint(lnglat){
   rescuePt=lnglat;
   map.getSource('rescue_pt').setData(turf.featureCollection([turf.point(lnglat)]));
@@ -409,117 +423,105 @@ function clearRescue(){
   map.getSource('rescue_conn').setData(turf.featureCollection([]));
   rescueInfo.textContent='';
 }
+
 function recomputeRescue(){
-  if(!rescuePt) return;
-  const destLayer = destMode==='fire' ? 'fire' : 'med';
-  if(!map.getSource(destLayer)) { rescueInfo.textContent='Destination dataset not available.'; return; }
-  const fc = map.querySourceFeatures(destLayer) || []; // will be empty; fallback to fetch source data object
-  // Safer: read from the source data object (GeoJSON)
-  try{
-    const data = map.getSource(destLayer)._data || map.getSource(destLayer)._options?.data;
-    const feats = (typeof data==='string') ? [] : (data?.features || []);
-    if(!feats.length){ rescueInfo.textContent='Destination dataset not loaded.'; return; }
+  if(!rescuePt){ rescueInfo.textContent='(click map to set a rescue point)'; return; }
+  const fc = destMode==='fire' ? fireFC : medFC;
+  if(!fc || !fc.features){ rescueInfo.textContent='Destination dataset not loaded.'; return; }
 
-    // If a flood layer visible, exclude facilities inside flooded polygons
-    const avoidFlood = (map.getLayoutProperty('nfhl','visibility')==='visible') || (map.getLayoutProperty('future','visibility')==='visible');
-    let polys=[];
-    if (avoidFlood){
-      polys = []
-      ;['nfhl','future'].forEach(id=>{
-        if(map.getSource(id)){
-          const d = map.getSource(id)._data || map.getSource(id)._options?.data;
-          if (typeof d!=='string' && d?.features) polys = polys.concat(d.features);
-        }
-      });
-    }
-
-    let best=null, bestD=Infinity, reason='';
-    feats.forEach(f=>{
-      const p = f.geometry?.coordinates;
-      if(!p) return;
-      const pt = turf.point(p);
-      if (avoidFlood && polys.length){
-        const inFlood = polys.some(poly=>turf.booleanPointInPolygon(pt, poly));
-        if (inFlood) return; // skip flooded facility
-      }
-      const d = turf.distance(turf.point(rescuePt), pt, {units:'miles'});
-      if (d<bestD){ best=f; bestD=d; }
-    });
-
-    // If everything was in flood, fall back to absolute nearest:
-    if (!best){
-      feats.forEach(f=>{
-        const p=f.geometry?.coordinates; if(!p) return;
-        const d=turf.distance(turf.point(rescuePt), turf.point(p), {units:'miles'});
-        if (d<bestD){ best=f; bestD=d; }
-      });
-      reason='(all in-flood; chose absolute nearest)';
-    } else if (avoidFlood) {
-      reason='(nearest outside flood)';
-    } else {
-      reason='(nearest by distance)';
-    }
-
-    if (!best){ rescueInfo.textContent='No nearby facility found.'; return; }
-
-    // Draw connector (straight-line proxy)
-    const line = turf.lineString([rescuePt, best.geometry.coordinates]);
-    map.getSource('rescue_conn').setData(turf.featureCollection([line]));
-
-    // ETA proxy: avg street speed 25 mph, detour factor 1.35 if flood layer visible
-    const speedMph = 25;
-    const detour = ((map.getLayoutProperty('nfhl','visibility')==='visible')||(map.getLayoutProperty('future','visibility')==='visible')) ? 1.35 : 1.15;
-    const miles = bestD * detour;
-    const etaMin = Math.round((miles / speedMph) * 60);
-
-    const name = destMode==='fire' ? (best.properties?.name || 'Fire Station') : (best.properties?.name || 'Medical facility');
-    rescueInfo.innerHTML = `<b>Rescue → ${esc(name)}</b><br>
-      Distance (proxy): ${miles.toFixed(2)} mi ${reason}<br>
-      ETA (proxy @ ${speedMph} mph): ${etaMin} min`;
-  }catch(err){
-    rescueInfo.textContent='(Could not compute rescue path.)';
-    console.error(err);
+  // Optional: ignore facilities inside visible floods
+  const floodAvoid = (map.getLayoutProperty('nfhl','visibility')==='visible' || map.getLayoutProperty('future','visibility')==='visible');
+  const polys = [];
+  if (floodAvoid){
+    if(nfhlFC?.features) polys.push(...nfhlFC.features);
+    if(futureFC?.features) polys.push(...futureFC.features);
   }
+
+  let best=null, bestD=Infinity, filtered=0;
+  const p0=turf.point(rescuePt);
+  for (const f of fc.features){
+    const p=f.geometry?.coordinates; if(!p) continue;
+    if (floodAvoid && polys.length){
+      const inFlood = polys.some(poly=>turf.booleanPointInPolygon(turf.point(p), poly));
+      if (inFlood){ filtered++; continue; }
+    }
+    const d=turf.distance(p0, turf.point(p), {units:'miles'});
+    if (d<bestD){ best=f; bestD=d; }
+  }
+  // fallback if all filtered
+  if(!best){
+    for (const f of fc.features){
+      const p=f.geometry?.coordinates; if(!p) continue;
+      const d=turf.distance(p0, turf.point(p), {units:'miles'});
+      if (d<bestD){ best=f; bestD=d; }
+    }
+  }
+  if(!best){ rescueInfo.textContent='No nearby facility found.'; return; }
+
+  // Draw connector and compute proxy ETA
+  const line=turf.lineString([rescuePt, best.geometry.coordinates]);
+  map.getSource('rescue_conn').setData(turf.featureCollection([line]));
+
+  const speed=25; // mph
+  const detour = floodAvoid ? 1.35 : 1.15;
+  const miles = bestD * detour;
+  const eta = Math.round((miles/speed)*60);
+
+  const name = best.properties?.name || (destMode==='fire' ? 'Fire Station' : 'Medical facility');
+  const why = floodAvoid ? (filtered>0 ? 'nearest outside flood' : 'nearest (no facilities in flood)') : 'nearest by distance';
+
+  rescueInfo.innerHTML = `<b>Rescue → ${esc(name)}</b><br>
+    Reason: ${why}<br>
+    Distance (proxy): ${miles.toFixed(2)} mi &nbsp;•&nbsp; ETA @ ${speed} mph: ${eta} min`;
 }
 
-/* ---------- Helpers ---------- */
-function setActive(container, btn){ [...container.querySelectorAll('.btn')].forEach(b=>b.classList.toggle('active', b===btn)); }
-function bindToggle(id, fn){ const el=document.getElementById(id); el.addEventListener('click', ()=>{ el.classList.toggle('active'); fn(el.classList.contains('active')); }); }
+/* ---------- Detail panel helpers ---------- */
 const tipEl=document.getElementById('tip'); const propsEl=document.getElementById('propTable');
 let showRaw=false, lastProps=null, lastPinned=false;
+
 const LABELS = {
   id:'ID', name:'Name', ref:'Ref', functional_class:'Class',
-  count:'Traffic index', oneway:'Direction', lanes:'Lanes',
-  maxspeed:'Max speed', surface:'Surface', divided:'Divided', zipcode:'ZIP'
+  [/* dynamic slot */ '']: ''
 };
-const FORMAT = {
-  'Direction': v => (String(v).toLowerCase()==='yes'||v==='1'||String(v).toLowerCase()==='true') ? 'One-way' : 'Two-way',
-  'Max speed': v => v ? `${v} mph` : '',
-  'Divided'  : v => (v ? 'yes':'no')
+const FIX_LABELS = {
+  count:'Weight', weight:'Weight', edge_weight:'Weight', aadt:'AADT', traffic:'Traffic', volume:'Volume',
+  oneway:'Direction', one_way:'Direction', is_oneway:'Direction', lanes:'Lanes', maxspeed:'Max speed',
+  surface:'Surface', divided:'Divided', zipcode:'ZIP'
 };
-function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
-function renderTable(obj){
-  if(showRaw) return `<pre style="white-space:pre-wrap;margin:0">${esc(JSON.stringify(obj,null,2))}</pre>`;
-  const keys=Object.keys(obj); if(!keys.length) return '(no selected fields)';
-  let h='<table>'; for(const k of keys){ h+=`<tr><td>${esc(k)}</td><td>${esc(obj[k])}</td></tr>` } return h+'</table>';
-}
 function cleanProps(p){
-  const out={}; for(const key in LABELS){ const lab=LABELS[key]; let v=p?.[key]; if(v==null||v==='') continue; if(FORMAT[lab]) v=FORMAT[lab](v); out[lab]=v; }
-  if(metrics && (p?.id!=null)){
-    const m=metrics[String(p.id)]; if(m){
-      if(m.betweenness!=null) out['Betweenness']=+m.betweenness;
-      if(m.degree!=null)      out['Degree']=+m.degree;
-      if(m.closeness!=null)   out['Closeness']=+m.closeness;
-      if(m.pagerank!=null)    out['PageRank']=+m.pagerank;
-      if(m.community!=null)   out['Community']=m.community;
+  const out={};
+  // curated + dynamic: show common and the detected weight field if present
+  if (p==null) return out;
+  const keys = new Set([
+    'id','name','ref','functional_class', weightField,
+    'oneway','one_way','is_oneway','lanes','maxspeed','surface','divided','zipcode'
+  ]);
+  for (const k of keys){
+    if(!k || !(k in p)) continue;
+    let label = FIX_LABELS[k] || k;
+    let v = p[k];
+    if (label==='Direction'){
+      const s = String(v).toLowerCase(); v = (s==='yes'||s==='true'||s==='1'||s==='y') ? 'One-way' : 'Two-way';
+    } else if (label==='Max speed' && v) {
+      v = `${v} mph`;
     }
+    out[label]=v;
   }
+  if (showRaw) out['__raw'] = p; // will be shown by renderTable
   return out;
 }
-map.on('mouseleave','edges-line',()=>{ if(!lastPinned) tipEl.classList.add('hidden'); });
-map.on('mouseleave','edges-weighted',()=>{ if(!lastPinned) tipEl.classList.add('hidden'); });
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function renderTable(obj){
+  if(showRaw){ return `<pre style="white-space:pre-wrap;margin:0">${esc(JSON.stringify(obj.__raw||obj,null,2))}</pre>`; }
+  const keys=Object.keys(obj).filter(k=>k!=='__raw'); if(!keys.length) return '(no selected fields)';
+  let h='<table>'; for(const k of keys){ h+=`<tr><td>${esc(k)}</td><td>${esc(obj[k])}</td></tr>` } return h+'</table>';
+}
 
-/* ---------- Metrics paint via feature-state ---------- */
+document.getElementById('toggleRaw').addEventListener('click', e=>{
+  e.preventDefault(); showRaw=!showRaw; if(lastProps) propsEl.innerHTML=renderTable(cleanProps(lastProps));
+});
+
+/* ---------- Metric painting via feature-state (if metrics provided) ---------- */
 map.on('render', throttle(()=>{
   if(!metrics || colorMode!=='metric') return;
   const bbox=[[0,0],[map.getCanvas().width, map.getCanvas().height]];
@@ -532,6 +534,10 @@ map.on('render', throttle(()=>{
 }, 400));
 
 function throttle(fn,wait){let t=0;return(...a)=>{const n=Date.now();if(n-t>wait){t=n;fn(...a);}}}
+function setActive(container, btn){ [...container.querySelectorAll('.btn')].forEach(b=>b.classList.toggle('active', b===btn)); }
+function bindToggle(id, fn){ const el=document.getElementById(id); el.addEventListener('click', ()=>{ el.classList.toggle('active'); fn(el.classList.contains('active')); }); }
+
+map.on('error', e=>console.error('Map error:', e?.error||e));
 })();
 </script>
 </body>
