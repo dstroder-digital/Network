@@ -8,6 +8,8 @@
 <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js"></script>
+<!-- Turf for nearest/ETA & flood containment checks -->
+<script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 
 <style>
 :root{--bg:#0b0b0b;--panel:#0009;--border:rgba(255,255,255,.12);--text:#eef5ff;--muted:#a8b3c7;
@@ -16,7 +18,7 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/
 #map{position:absolute;inset:0}
 .hud{position:absolute;top:12px;left:12px;z-index:20;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
 .hud h3{margin:0 0 6px 0;font-size:15px} .hud small{color:var(--muted)}
-.panel{position:absolute;top:12px;right:12px;z-index:20;width:min(390px,34vw);max-height:calc(100% - 24px);overflow:auto;
+.panel{position:absolute;top:12px;right:12px;z-index:20;width:min(410px,36vw);max-height:calc(100% - 24px);overflow:auto;
        background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
 .row{display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:center}
 .btnbar{display:flex;flex-wrap:wrap;gap:6px}
@@ -37,6 +39,9 @@ a{color:#9ad0ff;text-decoration:none} a:hover{text-decoration:underline}
      font-size:12.5px;box-shadow:0 10px 30px #0006}
 .hidden{display:none}
 .range{width:100%}
+.small{color:var(--muted);font-size:12px}
+.details{background:#0e111670;border:1px solid var(--border);border-radius:10px;padding:8px}
+summary{cursor:pointer}
 </style>
 </head>
 <body>
@@ -44,16 +49,14 @@ a{color:#9ad0ff;text-decoration:none} a:hover{text-decoration:underline}
 
 <div class="hud">
   <h3>Primal Network (PMTiles)</h3>
-  <small>Pan/zoom; drag + <kbd>Alt</kbd> to rotate. Hover = preview, click = pin.</small>
+  <small>Pan/zoom; drag + <kbd>Alt</kbd> to rotate. Hover = preview, click = pin / set rescue point.</small>
 </div>
 
 <div class="panel">
   <div class="row">
     <label>Basemap</label>
     <div class="btnbar" id="basemapBar">
-      <button class="btn" data-basemap="none">None</button>
       <button class="btn active" data-basemap="dark">Dark</button>
-      <button class="btn" data-basemap="osm">OSM</button>
     </div>
   </div>
 
@@ -67,16 +70,6 @@ a{color:#9ad0ff;text-decoration:none} a:hover{text-decoration:underline}
     </div>
   </div>
 
-  <div class="row">
-    <label>Edge filter</label>
-    <div class="btnbar" id="filterBar">
-      <button class="btn active" data-filter="all">All</button>
-      <button class="btn" data-filter="top10">Top 10% (count)</button>
-      <button class="btn" data-filter="top1">Top 1% (count)</button>
-      <button class="btn" data-filter="metricTop" id="metricFilter" style="display:none">Top (metric)</button>
-    </div>
-  </div>
-
   <div class="row" id="metricRow" style="display:none">
     <label>Metric</label>
     <select id="metricSelect">
@@ -86,6 +79,9 @@ a{color:#9ad0ff;text-decoration:none} a:hover{text-decoration:underline}
       <option value="pagerank">pagerank</option>
       <option value="community">community</option>
     </select>
+  </div>
+  <div id="metricHint" class="small" style="display:none;margin-top:-6px;margin-bottom:6px;">
+    Metrics file not loaded. Drop <code>docs/data/app/edge_metrics.json</code> to enable color & filters.
   </div>
 
   <div class="btnbar" style="margin-top:6px">
@@ -111,9 +107,19 @@ a{color:#9ad0ff;text-decoration:none} a:hover{text-decoration:underline}
     <input class="range" type="range" id="floodOpacity" min="0" max="1" step="0.05" value="0.35">
   </div>
 
-  <div class="btnbar" style="margin-top:6px">
-    <button class="btn" id="toggleBaseline">Route: Baseline</button>
-    <button class="btn" id="toggleFlooded">Route: Flooded</button>
+  <div class="divider"></div>
+
+  <div class="details">
+    <b>Rescue planner</b> <span class="small">(click map to set rescue point)</span>
+    <div class="btnbar" style="margin-top:6px">
+      <button class="btn active" data-dest="fire" id="destFire">Send to Fire</button>
+      <button class="btn" data-dest="medical" id="destMed">Send to Medical</button>
+      <button class="btn" id="clearRescue">Clear</button>
+    </div>
+    <div id="rescueNote" class="small" style="margin-top:6px">
+      Picks the nearest facility by road proxy (great-circle × factor). If a flood layer is visible, facilities inside flooded polygons are ignored.
+    </div>
+    <div id="rescueInfo" class="small" style="margin-top:6px"></div>
   </div>
 
   <div class="legend">
@@ -126,6 +132,13 @@ a{color:#9ad0ff;text-decoration:none} a:hover{text-decoration:underline}
   </div>
 
   <div class="divider"></div>
+
+  <details>
+    <summary>Fields (from tiles)</summary>
+    <div id="fieldsList" class="small" style="margin-top:6px"></div>
+  </details>
+
+  <div class="divider"></div>
   <div class="props" id="propTable">(click an edge to pin its properties) — <a href="#" id="toggleRaw">show raw</a></div>
 </div>
 
@@ -133,17 +146,14 @@ a{color:#9ad0ff;text-decoration:none} a:hover{text-decoration:underline}
 
 <script>
 (() => {
-/* ---------- URLs (edit to your paths) ---------- */
+/* ---------- Data URLs ---------- */
 const PMTILES_URL = 'pmtiles://https://media.githubusercontent.com/media/dstroder-digital/Network/main/docs/data/app/edges.pmtiles';
 const NODES_URL   = 'https://dstroder-digital.github.io/Network/data/app/nodes.geojson';
 const FIRE_URL    = 'https://dstroder-digital.github.io/Network/data/app/fire_stations.geojson';
 const MED_URL     = 'https://dstroder-digital.github.io/Network/data/app/medical_facilities.geojson';
 const NFHL_URL    = 'https://dstroder-digital.github.io/Network/data/app/nfhl_dissolved.geojson';
 const FUTURE_URL  = 'https://dstroder-digital.github.io/Network/data/app/future_flood_dissolved.geojson';
-const ROUTE_BASE  = 'https://dstroder-digital.github.io/Network/data/app/route_example_baseline.geojson';
-const ROUTE_FLOOD = 'https://dstroder-digital.github.io/Network/data/app/route_example_flooded.geojson';
-const ROUTE_STATS = 'https://dstroder-digital.github.io/Network/data/app/route_example_stats.json';
-const METRICS_URL = null; // e.g. './data/app/edge_metrics.json' (see format in comments)
+const METRICS_URL = null; // set to './data/app/edge_metrics.json' when available
 
 /* ---------- PMTiles protocol (guard) ---------- */
 if (!window.__pmtilesProto) {
@@ -164,12 +174,17 @@ map.addControl(new maplibregl.ScaleControl({maxWidth:160, unit:'imperial'}));
 const arrowSvg='data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="white" opacity="0.75"><path d="M13 5l7 7-7 7v-4H4v-6h9V5z"/></svg>`);
 map.on('load',()=>{ map.loadImage(arrowSvg,(e,img)=>{ if(!e) map.addImage('arrow', img,{pixelRatio:2}); }); });
 
-/* ---------- Source-layer autodetect ---------- */
+/* ---------- Source-layer autodetect + field list ---------- */
 let SOURCE_LAYER='edges';
+const fieldsUI = document.getElementById('fieldsList');
 const tiles = new pmtiles.PMTiles(PMTILES_URL.replace('pmtiles://',''));
 tiles.getMetadata().then(meta=>{
   const names=(meta?.vector_layers||[]).map(v=>v.id);
   if(names.length && !names.includes(SOURCE_LAYER)) SOURCE_LAYER=names[0];
+  const attrs = (meta?.tilestats?.layers||[]).find(l=>l.layer===SOURCE_LAYER)?.attributes || [];
+  if (attrs.length){
+    fieldsUI.innerHTML = attrs.map(a=>`• <code>${a.attribute}</code> <span class="small">(${a.type||'?'})</span>`).join('<br>');
+  }
 }).catch(()=>{});
 
 /* ---------- Colors ---------- */
@@ -195,105 +210,107 @@ function edgePaint(mode){
 }
 
 /* ---------- UI state ---------- */
-let basemap='dark', colorMode='solid', filterMode='all';
+let colorMode='solid';
 let metrics=null, metricName='betweenness', metricDomain=[0,1];
 let showWeighted=false, showArrows=false;
+let destMode='fire'; // or 'medical'
 
 /* ---------- Build map ---------- */
 map.on('load', async ()=>{
-  addBasemap(basemap);
+  // Basemap = dark only
+  map.addSource('dark',{type:'raster',tiles:['https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png'],tileSize:256,attribution:'© Stadia Maps, © OpenMapTiles, © OpenStreetMap'});
+  map.addLayer({id:'dark',type:'raster',source:'dark'}, 'bg');
 
+  // Edges
   map.addSource('edges', {type:'vector', url: PMTILES_URL});
-
   map.addLayer({ id:'edges-line', type:'line', source:'edges', 'source-layer':SOURCE_LAYER,
     layout:{'line-cap':'round','line-join':'round'}, paint: edgePaint(colorMode)
   });
 
-  // Weighted overlay (above edges; fixed)
+  // Weighted overlay (above edges)
   map.addLayer({ id:'edges-weighted', type:'line', source:'edges','source-layer':SOURCE_LAYER,
     layout:{'line-cap':'round','line-join':'round','visibility':'none'},
-    paint:{ 'line-color':'#ffcc00','line-opacity':0.65,
+    paint:{ 'line-color':'#9bf6ff','line-opacity':0.9,
       'line-width':['interpolate',['linear'],['coalesce',['to-number',['get','count']],0],
-        0,0, 50,2, 100,3.2, 250,5, 500,7.5, 1000,11]
+        0,0, 50,2, 100,3.5, 250,6, 500,9, 1000,13]
     }
   });
 
-  // One-way arrows
+  // One-way arrows (broadened filter to catch varied encodings)
   map.addLayer({ id:'oneway-arrows', type:'symbol', source:'edges','source-layer':SOURCE_LAYER,
-    layout:{'symbol-placement':'line','symbol-spacing':60,'icon-image':'arrow','icon-size':0.6,'visibility':'none'},
+    layout:{'symbol-placement':'line','symbol-spacing':60,'icon-image':'arrow','icon-size':0.55,'visibility':'none'},
     filter:['any',
       ['==',['downcase',['get','oneway']],'yes'],
-      ['in',['to-string',['get','oneway']],['literal',['1','true','True']]]
+      ['==',['downcase',['get','one_way']],'yes'],
+      ['in',['to-string',['get','oneway']],['literal',['1','true','True','Y','Yes']]],
+      ['in',['to-string',['get','is_oneway']],['literal',['1','true','True','Y','Yes']]]
     ],
-    paint:{'icon-opacity':0.7}
+    paint:{'icon-opacity':0.75}
   });
 
-  await addOptionalLayers();      // nodes, POIs, floods, routes
-  await maybeLoadMetrics();       // optional JSON to enable metric color/filter
+  await addOptionalLayers();
+  await maybeLoadMetrics();
+  wireUI();
 
-  wireUI();                       // buttons & toggles
+  // If tilestats didn’t include fields, sample one feature to list keys:
+  if (!fieldsUI.innerHTML){
+    const bb=[[0,0],[map.getCanvas().width,map.getCanvas().height]];
+    const f=map.queryRenderedFeatures(bb,{layers:['edges-line']})[0];
+    if (f?.properties){
+      fieldsUI.innerHTML = Object.keys(f.properties).sort().map(k=>`• <code>${k}</code>`).join('<br>');
+    }
+  }
 });
 
 /* ---------- Optional layers ---------- */
 async function addOptionalLayers(){
-  addGeo('nodes', NODES_URL, {type:'circle', paint:{
+  addGeo('nodes',  NODES_URL, {type:'circle', paint:{
     'circle-radius':['interpolate',['linear'],['zoom'],8,1.2,12,2.2,15,3.2],
-    'circle-color':'#f4a261','circle-opacity':0.8,'circle-stroke-color':'#111','circle-stroke-width':0.5
+    'circle-color':'#f4a261','circle-opacity':0.85,'circle-stroke-color':'#111','circle-stroke-width':0.5
   }});
-  addGeo('fire',  FIRE_URL, {type:'circle', paint:{
-    'circle-radius':['interpolate',['linear'],['zoom'],8,2,12,3.5,15,5],
+  addGeo('fire',   FIRE_URL, {type:'circle', paint:{
+    'circle-radius':['interpolate',['linear'],['zoom'],8,2.2,12,3.8,15,5.2],
     'circle-color':'#f4a261','circle-stroke-color':'#111','circle-stroke-width':0.5
   }});
-  addGeo('med',   MED_URL, {type:'circle', paint:{
-    'circle-radius':['interpolate',['linear'],['zoom'],8,2,12,3.5,15,5],
+  addGeo('med',    MED_URL,  {type:'circle', paint:{
+    'circle-radius':['interpolate',['linear'],['zoom'],8,2.2,12,3.8,15,5.2],
     'circle-color':'#e76f51','circle-stroke-color':'#111','circle-stroke-width':0.5
   }});
-  addGeo('nfhl',  NFHL_URL, {type:'fill',  paint:{'fill-color':'#38bdf8','fill-opacity':0.35,'fill-outline-color':'#0ea5e9'}});
-  addGeo('future',FUTURE_URL,{type:'fill', paint:{'fill-color':'#22d3ee','fill-opacity':0.35,'fill-outline-color':'#06b6d4'}});
-  addGeo('route_base',  ROUTE_BASE,  {type:'line', paint:{'line-color':'#22c55e','line-width':4}});
-  addGeo('route_flood', ROUTE_FLOOD, {type:'line', paint:{'line-color':'#ef4444','line-width':4}});
+  addGeo('nfhl',   NFHL_URL, {type:'fill',   paint:{'fill-color':'#38bdf8','fill-opacity':0.35,'fill-outline-color':'#0ea5e9'}});
+  addGeo('future', FUTURE_URL,{type:'fill',  paint:{'fill-color':'#22d3ee','fill-opacity':0.35,'fill-outline-color':'#06b6d4'}});
 
+  // Rescue layers
+  map.addSource('rescue_pt',{type:'geojson',data:{"type":"FeatureCollection","features":[]}});
+  map.addLayer({id:'rescue_pt',type:'circle',source:'rescue_pt',
+    paint:{'circle-radius':6,'circle-color':'#ffffff','circle-stroke-color':'#111','circle-stroke-width':1}, layout:{visibility:'visible'}});
+
+  map.addSource('rescue_conn',{type:'geojson',data:{"type":"FeatureCollection","features":[]}});
+  map.addLayer({id:'rescue_conn',type:'line',source:'rescue_conn',paint:{'line-color':'#22c55e','line-width':3,'line-dasharray':[2,2]}});
+}
+function addGeo(id, url, layer){
   try{
-    const s = await (await fetch(ROUTE_STATS,{mode:'cors'})).json();
-    if (s && s.baseline && s.flooded){
-      const t=document.getElementById('propTable');
-      const delta = Math.round(s.flooded.minutes - s.baseline.minutes);
-      t.insertAdjacentHTML('afterbegin',
-        `<div style="margin-bottom:8px"><b>Example travel time:</b> baseline ${Math.round(s.baseline.minutes)} min vs flooded ${Math.round(s.flooded.minutes)} min — Δ ${delta} min</div>`);
-    }
-  }catch(_){}
+    map.addSource(id,{type:'geojson',data:url});
+    const lyr = Object.assign({id,source:id,layout:{visibility: (id==='nodes'?'visible':'none')}}, layer);
+    map.addLayer(lyr);
+    document.getElementById(btnId(id)).disabled=false;
+  }catch(_){
+    const btn=document.getElementById(btnId(id)); if(btn) btn.disabled=true;
+  }
 }
-function addGeo(id, url, layer){ try{
-  map.addSource(id,{type:'geojson',data:url}); map.addLayer(Object.assign({id,source:id,layout:{visibility:'none'}}, layer));
-  document.getElementById(btnId(id)).disabled=false;
-}catch(_){ document.getElementById(btnId(id)).disabled=true; }
-}
-function btnId(id){
-  return ({
-    nodes:'toggleNodes', fire:'toggleFire', med:'toggleMedical',
-    nfhl:'toggleNFHL', future:'toggleFuture',
-    route_base:'toggleBaseline', route_flood:'toggleFlooded'
-  })[id] || 'noop';
-}
+function btnId(id){ return ({nodes:'toggleNodes',fire:'toggleFire',med:'toggleMedical',nfhl:'toggleNFHL',future:'toggleFuture'})[id]||'noop'; }
 
-/* ---------- Metrics (optional) ----------
-   If you provide METRICS_URL as:
-   {
-     "20933": {"degree":4,"betweenness":0.0021,"closeness":0.31,"pagerank":0.00042,"community":12},
-     "49263": {"degree":7,"betweenness":0.0007}
-   }
-   The UI will unlock “By metric” color + “Top (metric)” filter and show values in the table.
-*/
+/* ---------- Metrics (optional) ---------- */
 async function maybeLoadMetrics(){
-  if (!METRICS_URL) return;
+  const hint=document.getElementById('metricHint');
+  if (!METRICS_URL){ hint.style.display=''; return; }
   try{
     const j = await (await fetch(METRICS_URL,{mode:'cors'})).json();
     metrics = Array.isArray(j) ? Object.fromEntries(j.map(o=>[String(o.id),o])) : j;
     document.getElementById('metricBtn').style.display='';
     document.getElementById('metricRow').style.display='';
-    document.getElementById('metricFilter').style.display='';
+    hint.style.display='none';
     setMetricDomain();
-  }catch(_){}
+  }catch(_){ hint.style.display=''; }
 }
 function setMetricDomain(){
   const vals=[]; for(const k in metrics){ const v=+metrics[k]?.[metricName]; if(Number.isFinite(v)) vals.push(v); }
@@ -301,47 +318,14 @@ function setMetricDomain(){
   metricDomain=[vals[Math.floor(vals.length*0.02)], vals[Math.floor(vals.length*0.98)]];
 }
 
-/* ---------- Basemap ---------- */
-function addBasemap(mode){
-  ['osm','dark'].forEach(id=>{ try{ if(map.getLayer(id)) map.removeLayer(id);}catch(e){} try{ if(map.getSource(id)) map.removeSource(id);}catch(e){} });
-  if(mode==='osm'){
-    map.addSource('osm',{type:'raster',tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],tileSize:256,attribution:'© OpenStreetMap'});
-    map.addLayer({id:'osm',type:'raster',source:'osm'}, 'edges-line');
-  }else if(mode==='dark'){
-    map.addSource('dark',{type:'raster',tiles:['https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png'],tileSize:256,attribution:'© Stadia Maps, © OpenMapTiles, © OpenStreetMap'});
-    map.addLayer({id:'dark',type:'raster',source:'dark'}, 'edges-line');
-  }
-}
-
-/* ---------- Filters ---------- */
-function applyFilter(){
-  if(!map.getLayer('edges-line')) return;
-  let f = ['>=',['coalesce',['to-number',['get','count']],0], 0]; // default = all
-  if(filterMode==='top10'){
-    f=['>=',['coalesce',['to-number',['get','count']],0], ['*',0.90,['max',['to-number',['get','count']],0]]];
-  }else if(filterMode==='top1'){
-    f=['>=',['coalesce',['to-number',['get','count']],0], ['*',0.99,['max',['to-number',['get','count']],0]]];
-  }else if(filterMode==='metricTop' && metrics){
-    const thr = metricDomain[0] + 0.90*(metricDomain[1]-metricDomain[0]);
-    f=['>=',['coalesce',['feature-state',metricName],['to-number',['get',metricName]],0], thr];
-  }
-  map.setFilter('edges-line', f);
-  if(map.getLayer('edges-weighted')){
-    map.setFilter('edges-weighted', ['all', f, ['>=',['coalesce',['to-number',['get','count']],0],250]]);
-  }
-}
-
 /* ---------- UI wiring ---------- */
 function wireUI(){
-  // basemap
-  document.getElementById('basemapBar').addEventListener('click', e=>{
-    const b=e.target.closest('.btn'); if(!b) return; basemap=b.dataset.basemap; setActive(e.currentTarget,b); addBasemap(basemap);
-  });
+  // only Dark present; basemap button kept inert but styled
 
-  // color
   const colorBar=document.getElementById('colorBar');
   colorBar.addEventListener('click', e=>{
-    const b=e.target.closest('.btn'); if(!b) return; colorMode=b.dataset.color; setActive(colorBar,b);
+    const b=e.target.closest('.btn'); if(!b) return;
+    colorMode=b.dataset.color; setActive(colorBar,b);
     if(colorMode==='metric'){
       document.getElementById('metricRow').style.display = metrics ? '' : 'none';
       map.setPaintProperty('edges-line','line-color',
@@ -352,13 +336,6 @@ function wireUI(){
     }
   });
 
-  // filter
-  const filterBar=document.getElementById('filterBar');
-  filterBar.addEventListener('click', e=>{
-    const b=e.target.closest('.btn'); if(!b) return; filterMode=b.dataset.filter; setActive(filterBar,b); applyFilter();
-  });
-
-  // metric select
   document.getElementById('metricSelect').addEventListener('change', e=>{
     metricName=e.target.value; setMetricDomain();
     if(colorMode==='metric'){
@@ -366,10 +343,8 @@ function wireUI(){
         ['interpolate',['linear'],['coalesce',['feature-state',metricName],['to-number',['get',metricName]],0],
           metricDomain[0],'#264653',(metricDomain[0]+metricDomain[1])/2,'#2a9d8f',metricDomain[1],'#e9c46a']);
     }
-    applyFilter();
   });
 
-  // toggles
   bindToggle('toggleWeighted', v=> map.setLayoutProperty('edges-weighted','visibility', v?'visible':'none'));
   bindToggle('toggleArrows',   v=> map.setLayoutProperty('oneway-arrows','visibility', v?'visible':'none'));
   bindToggle('toggleNodes',    v=> map.setLayoutProperty('nodes','visibility', v?'visible':'none'));
@@ -377,28 +352,141 @@ function wireUI(){
   bindToggle('toggleMedical',  v=> map.setLayoutProperty('med','visibility', v?'visible':'none'));
   bindToggle('toggleNFHL',     v=> map.setLayoutProperty('nfhl','visibility', v?'visible':'none'));
   bindToggle('toggleFuture',   v=> map.setLayoutProperty('future','visibility', v?'visible':'none'));
-  bindToggle('toggleBaseline', v=> map.setLayoutProperty('route_base','visibility', v?'visible':'none'));
-  bindToggle('toggleFlooded',  v=> map.setLayoutProperty('route_flood','visibility', v?'visible':'none'));
 
-  // flood opacity
   document.getElementById('floodOpacity').addEventListener('input', e=>{
     const v=+e.target.value; if(map.getLayer('nfhl')) map.setPaintProperty('nfhl','fill-opacity', v);
     if(map.getLayer('future')) map.setPaintProperty('future','fill-opacity', v);
   });
 
-  // detail table raw toggle
+  // Rescue destination type
+  document.getElementById('destFire').addEventListener('click', e=>{
+    destMode='fire'; setActive(e.currentTarget.parentElement, e.currentTarget); recomputeRescue();
+  });
+  document.getElementById('destMed').addEventListener('click', e=>{
+    destMode='medical'; setActive(e.currentTarget.parentElement, e.currentTarget); recomputeRescue();
+  });
+  document.getElementById('clearRescue').addEventListener('click', clearRescue);
+
+  // Raw toggle
   document.getElementById('toggleRaw').addEventListener('click', e=>{
     e.preventDefault(); showRaw=!showRaw; if(lastProps) renderProps(lastProps);
   });
+
+  // Click map to set rescue point or pin edge
+  map.on('click', (e)=>{
+    const feats = map.queryRenderedFeatures(e.point,{layers:['edges-line','edges-weighted']});
+    if (feats.length){
+      lastProps=feats[0].properties||{}; lastPinned=true; propsEl.innerHTML=renderTable(cleanProps(lastProps));
+      return;
+    }
+    // else set rescue point
+    setRescuePoint([e.lngLat.lng,e.lngLat.lat]);
+  });
+
+  // Tooltip on hover
+  map.on('mousemove', e=>{
+    const f=map.queryRenderedFeatures(e.point,{layers:['edges-line','edges-weighted']})[0];
+    if(!f){ if(!lastPinned) tipEl.classList.add('hidden'); return; }
+    const nm=f.properties?.name||f.properties?.ref||'Edge';
+    const cnt=+f.properties?.count;
+    tipEl.innerHTML=`<strong>${esc(nm)}</strong>${Number.isFinite(cnt)?` — count: ${cnt}`:''}`;
+    tipEl.style.left=e.originalEvent.clientX+'px'; tipEl.style.top=e.originalEvent.clientY+'px';
+    tipEl.classList.remove('hidden');
+  });
 }
 
+/* ---------- Rescue planning ---------- */
+let rescuePt=null; // [lng,lat]
+const rescueInfo=document.getElementById('rescueInfo');
+function setRescuePoint(lnglat){
+  rescuePt=lnglat;
+  map.getSource('rescue_pt').setData(turf.featureCollection([turf.point(lnglat)]));
+  recomputeRescue();
+}
+function clearRescue(){
+  rescuePt=null;
+  map.getSource('rescue_pt').setData(turf.featureCollection([]));
+  map.getSource('rescue_conn').setData(turf.featureCollection([]));
+  rescueInfo.textContent='';
+}
+function recomputeRescue(){
+  if(!rescuePt) return;
+  const destLayer = destMode==='fire' ? 'fire' : 'med';
+  if(!map.getSource(destLayer)) { rescueInfo.textContent='Destination dataset not available.'; return; }
+  const fc = map.querySourceFeatures(destLayer) || []; // will be empty; fallback to fetch source data object
+  // Safer: read from the source data object (GeoJSON)
+  try{
+    const data = map.getSource(destLayer)._data || map.getSource(destLayer)._options?.data;
+    const feats = (typeof data==='string') ? [] : (data?.features || []);
+    if(!feats.length){ rescueInfo.textContent='Destination dataset not loaded.'; return; }
+
+    // If a flood layer visible, exclude facilities inside flooded polygons
+    const avoidFlood = (map.getLayoutProperty('nfhl','visibility')==='visible') || (map.getLayoutProperty('future','visibility')==='visible');
+    let polys=[];
+    if (avoidFlood){
+      polys = []
+      ;['nfhl','future'].forEach(id=>{
+        if(map.getSource(id)){
+          const d = map.getSource(id)._data || map.getSource(id)._options?.data;
+          if (typeof d!=='string' && d?.features) polys = polys.concat(d.features);
+        }
+      });
+    }
+
+    let best=null, bestD=Infinity, reason='';
+    feats.forEach(f=>{
+      const p = f.geometry?.coordinates;
+      if(!p) return;
+      const pt = turf.point(p);
+      if (avoidFlood && polys.length){
+        const inFlood = polys.some(poly=>turf.booleanPointInPolygon(pt, poly));
+        if (inFlood) return; // skip flooded facility
+      }
+      const d = turf.distance(turf.point(rescuePt), pt, {units:'miles'});
+      if (d<bestD){ best=f; bestD=d; }
+    });
+
+    // If everything was in flood, fall back to absolute nearest:
+    if (!best){
+      feats.forEach(f=>{
+        const p=f.geometry?.coordinates; if(!p) return;
+        const d=turf.distance(turf.point(rescuePt), turf.point(p), {units:'miles'});
+        if (d<bestD){ best=f; bestD=d; }
+      });
+      reason='(all in-flood; chose absolute nearest)';
+    } else if (avoidFlood) {
+      reason='(nearest outside flood)';
+    } else {
+      reason='(nearest by distance)';
+    }
+
+    if (!best){ rescueInfo.textContent='No nearby facility found.'; return; }
+
+    // Draw connector (straight-line proxy)
+    const line = turf.lineString([rescuePt, best.geometry.coordinates]);
+    map.getSource('rescue_conn').setData(turf.featureCollection([line]));
+
+    // ETA proxy: avg street speed 25 mph, detour factor 1.35 if flood layer visible
+    const speedMph = 25;
+    const detour = ((map.getLayoutProperty('nfhl','visibility')==='visible')||(map.getLayoutProperty('future','visibility')==='visible')) ? 1.35 : 1.15;
+    const miles = bestD * detour;
+    const etaMin = Math.round((miles / speedMph) * 60);
+
+    const name = destMode==='fire' ? (best.properties?.name || 'Fire Station') : (best.properties?.name || 'Medical facility');
+    rescueInfo.innerHTML = `<b>Rescue → ${esc(name)}</b><br>
+      Distance (proxy): ${miles.toFixed(2)} mi ${reason}<br>
+      ETA (proxy @ ${speedMph} mph): ${etaMin} min`;
+  }catch(err){
+    rescueInfo.textContent='(Could not compute rescue path.)';
+    console.error(err);
+  }
+}
+
+/* ---------- Helpers ---------- */
 function setActive(container, btn){ [...container.querySelectorAll('.btn')].forEach(b=>b.classList.toggle('active', b===btn)); }
 function bindToggle(id, fn){ const el=document.getElementById(id); el.addEventListener('click', ()=>{ el.classList.toggle('active'); fn(el.classList.contains('active')); }); }
-
-/* ---------- Tooltip & details ---------- */
 const tipEl=document.getElementById('tip'); const propsEl=document.getElementById('propTable');
 let showRaw=false, lastProps=null, lastPinned=false;
-
 const LABELS = {
   id:'ID', name:'Name', ref:'Ref', functional_class:'Class',
   count:'Traffic index', oneway:'Direction', lanes:'Lanes',
@@ -409,7 +497,6 @@ const FORMAT = {
   'Max speed': v => v ? `${v} mph` : '',
   'Divided'  : v => (v ? 'yes':'no')
 };
-
 function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function renderTable(obj){
   if(showRaw) return `<pre style="white-space:pre-wrap;margin:0">${esc(JSON.stringify(obj,null,2))}</pre>`;
@@ -418,7 +505,6 @@ function renderTable(obj){
 }
 function cleanProps(p){
   const out={}; for(const key in LABELS){ const lab=LABELS[key]; let v=p?.[key]; if(v==null||v==='') continue; if(FORMAT[lab]) v=FORMAT[lab](v); out[lab]=v; }
-  // metrics into table if available
   if(metrics && (p?.id!=null)){
     const m=metrics[String(p.id)]; if(m){
       if(m.betweenness!=null) out['Betweenness']=+m.betweenness;
@@ -430,26 +516,10 @@ function cleanProps(p){
   }
   return out;
 }
-
-map.on('mousemove', e=>{
-  const f=map.queryRenderedFeatures(e.point,{layers:['edges-line','edges-weighted']})[0];
-  if(!f){ if(!lastPinned) tipEl.classList.add('hidden'); return; }
-  const nm=f.properties?.name||f.properties?.ref||'Edge';
-  const cnt=+f.properties?.count;
-  tipEl.innerHTML=`<strong>${esc(nm)}</strong>${Number.isFinite(cnt)?` — count: ${cnt}`:''}`;
-  tipEl.style.left=e.originalEvent.clientX+'px'; tipEl.style.top=e.originalEvent.clientY+'px';
-  tipEl.classList.remove('hidden');
-});
 map.on('mouseleave','edges-line',()=>{ if(!lastPinned) tipEl.classList.add('hidden'); });
 map.on('mouseleave','edges-weighted',()=>{ if(!lastPinned) tipEl.classList.add('hidden'); });
 
-map.on('click', e=>{
-  const f=map.queryRenderedFeatures(e.point,{layers:['edges-line','edges-weighted']})[0];
-  if(!f){ lastPinned=false; tipEl.classList.add('hidden'); propsEl.textContent='(click an edge to pin its properties)'; lastProps=null; return; }
-  lastPinned=true; lastProps=f.properties||{}; propsEl.innerHTML=renderTable(cleanProps(lastProps));
-});
-
-/* ---------- Metric painting via feature-state (when metrics provided) ---------- */
+/* ---------- Metrics paint via feature-state ---------- */
 map.on('render', throttle(()=>{
   if(!metrics || colorMode!=='metric') return;
   const bbox=[[0,0],[map.getCanvas().width, map.getCanvas().height]];
@@ -459,13 +529,9 @@ map.on('render', throttle(()=>{
     const m=metrics[String(id)]; if(!m) continue;
     map.setFeatureState({source:'edges',sourceLayer:SOURCE_LAYER,id:f.id}, m);
   }
-  applyFilter();
 }, 400));
 
 function throttle(fn,wait){let t=0;return(...a)=>{const n=Date.now();if(n-t>wait){t=n;fn(...a);}}}
-
-/* ---------- Simple helpers ---------- */
-map.on('error', e=>console.error('Map error:', e?.error||e));
 })();
 </script>
 </body>
